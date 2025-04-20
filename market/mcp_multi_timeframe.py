@@ -3,6 +3,7 @@ import json
 from typing import Dict, Any, List, Optional
 from market.price_levels import PriceLevelAnalyzer, LevelType
 from datetime import datetime, UTC
+from mcp.server.fastmcp.exceptions import ToolError
 
 logger = logging.getLogger(__name__)
 
@@ -27,41 +28,37 @@ def register_multi_timeframe_tools(mcp, agent):
             Comprehensive multi-timeframe analysis with support/resistance levels
         """
         from main import app
-        from market.mcp_tools import get_technical_indicators, get_price_levels, get_news_sentiment
-        
-        # Define timeframe hierarchy based on CipherAgent's implementation
-        timeframe_hierarchy = {
-            "1min": ["5min", "15min", "60min", "daily"],
-            "5min": ["15min", "30min", "60min"],  
-            "15min": ["30min", "60min"],
-            "30min": ["60min", 'daily'],
-            "60min": ["daily"],
-            "daily": ["weekly", "monthly"],
-            "weekly": ["monthly"],
-            "monthly": []
-        }
         
         try:
+            # Define timeframe hierarchy based on CipherAgent's implementation
+            timeframe_hierarchy = {
+                "1min": ["5min", "15min", "60min", "daily"],
+                "5min": ["15min", "30min", "60min"],  
+                "15min": ["30min", "60min"],
+                "30min": ["60min", 'daily'],
+                "60min": ["daily"],
+                "daily": ["weekly", "monthly"],
+                "weekly": ["monthly"],
+                "monthly": []
+            }
+            
             # Get higher timeframes based on primary timeframe
             higher_timeframes = timeframe_hierarchy.get(primary_timeframe, [])
             
             # Get primary timeframe data
-            primary_data = await get_technical_indicators(symbol, asset_type, primary_timeframe)
-            if "error" in primary_data:
-                return {"error": primary_data["error"]}
-                
+            primary_data = await mcp.tools.get_technical_indicators(symbol, asset_type, primary_timeframe)
             current_price = primary_data.get("price_data", {}).get("current", 0)
             
             # Get price levels across timeframes
-            levels = await get_price_levels(symbol, asset_type, primary_timeframe)
+            levels = await mcp.tools.get_price_levels(symbol, asset_type, primary_timeframe)
             
             # Get sentiment data
-            sentiment = await get_news_sentiment(symbol)
+            sentiment = await mcp.tools.get_news_sentiment(symbol)
             
             # Analyze higher timeframes
             higher_tf_data = {}
             for tf in higher_timeframes:
-                higher_tf_data[tf] = await get_technical_indicators(symbol, asset_type, tf)
+                higher_tf_data[tf] = await mcp.tools.get_technical_indicators(symbol, asset_type, tf)
             
             # Generate trade signal based on multi-timeframe analysis
             # Determine the primary signal
@@ -123,13 +120,12 @@ def register_multi_timeframe_tools(mcp, agent):
                 "timestamp": datetime.now(UTC).isoformat()
             }
             
+        except ToolError as e:
+            # Re-raise ToolError as-is
+            raise
         except Exception as e:
             logger.error(f"Error in multi-timeframe analysis: {e}")
-            return {
-                "error": f"Failed to analyze multi-timeframe data: {str(e)}",
-                "symbol": symbol,
-                "primary_timeframe": primary_timeframe
-            }
+            raise ToolError(f"Failed to analyze multi-timeframe data: {str(e)}")
     
     # Create an MCP prompt template specifically for multi-timeframe analysis
     @mcp.prompt("mtf_analysis")

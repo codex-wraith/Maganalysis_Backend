@@ -1,10 +1,11 @@
-from market.market_manager import MarketManager
 from market.indicators import TechnicalIndicators, TimeframeParameters
 from market.price_levels import PriceLevelAnalyzer, LevelType
 from market.formatters import DataFormatter
+from mcp.server.fastmcp.exceptions import ToolError
 import logging
 import json
 import os
+import time
 from typing import Dict, Any, Optional
 from datetime import datetime, UTC
 
@@ -29,48 +30,64 @@ def register_market_tools(mcp, agent):
         Returns:
             Raw dictionary containing the market data
         """
-        # Get the market manager from the app state
-        from main import app
-        market_manager = app.state.market_manager
-        
-        # Determine if this is a crypto symbol
-        is_crypto = asset_type.lower() == "crypto"
-        
-        # Normalize timeframe parameter
-        valid_timeframes = ["1min", "5min", "15min", "30min", "60min", "daily", "weekly", "monthly"]
-        if timeframe not in valid_timeframes:
-            timeframe = "daily"  # Default to daily if invalid timeframe
-            
-        # Determine if this is extended timeframe or intraday
-        is_extended = timeframe in ["daily", "weekly", "monthly"]
-        
-        # Get data based on asset type and timeframe
         try:
+            # Get the market manager and http_session from the app state
+            from main import app
+            market_manager = app.state.market_manager
+            http_session = app.state.http
+            
+            # Determine if this is a crypto symbol
+            is_crypto = asset_type.lower() == "crypto"
+            
+            # Normalize timeframe parameter
+            valid_timeframes = ["1min", "5min", "15min", "30min", "60min", "daily", "weekly", "monthly"]
+            if timeframe not in valid_timeframes:
+                timeframe = "daily"  # Default to daily if invalid timeframe
+                
+            # Cache key for this data
+            key = f"{symbol}-{timeframe}"
+            ts_now, cached = app.state.cache.get(key, (0, None))
+            if time.time() - ts_now < 60:
+                return cached
+                
+            # Determine if this is extended timeframe or intraday
+            is_extended = timeframe in ["daily", "weekly", "monthly"]
+            
+            # Get data based on asset type and timeframe
             if is_crypto:
                 if is_extended:
                     if timeframe == "daily":
-                        data = await market_manager.get_crypto_daily(symbol, "USD")
+                        data = await market_manager.get_crypto_daily(symbol, "USD", http_session=http_session)
                     elif timeframe == "weekly":
-                        data = await market_manager.get_crypto_weekly(symbol, "USD")
+                        data = await market_manager.get_crypto_weekly(symbol, "USD", http_session=http_session)
                     else:  # monthly
-                        data = await market_manager.get_crypto_monthly(symbol, "USD")
+                        data = await market_manager.get_crypto_monthly(symbol, "USD", http_session=http_session)
                 else:
-                    data = await market_manager.get_crypto_intraday(symbol, "USD", interval=timeframe)
+                    data = await market_manager.get_crypto_intraday(symbol, "USD", interval=timeframe, http_session=http_session)
             else:
                 if is_extended:
                     if timeframe == "daily":
-                        data = await market_manager.get_time_series_daily(symbol)
+                        data = await market_manager.get_time_series_daily(symbol, http_session=http_session)
                     elif timeframe == "weekly":
-                        data = await market_manager.get_time_series_weekly(symbol)
+                        data = await market_manager.get_time_series_weekly(symbol, http_session=http_session)
                     else:  # monthly
-                        data = await market_manager.get_time_series_monthly(symbol)
+                        data = await market_manager.get_time_series_monthly(symbol, http_session=http_session)
                 else:
-                    data = await market_manager.get_intraday_data(symbol, interval=timeframe)
-                    
+                    data = await market_manager.get_intraday_data(symbol, interval=timeframe, http_session=http_session)
+            
+            # Slice data for performance and cache
+            series_key = next((k for k in data.keys() if "Time Series" in k or "Digital Currency" in k), None)
+            if series_key and series_key in data:
+                sliced = dict(list(data[series_key].items())[:100])  # last 100 candles
+                data[series_key] = sliced
+            
+            # Cache the result
+            app.state.cache[key] = (time.time(), data)
             return data
+                
         except Exception as e:
             logger.error(f"Error getting market data for {symbol}: {e}")
-            return {"error": f"Failed to get market data: {str(e)}"}
+            raise ToolError(f"Failed to get market data: {str(e)}")
     
     @mcp.tool()
     async def get_market_data(symbol: str, asset_type: str = "stock", timeframe: str = "daily"):
@@ -104,10 +121,6 @@ def register_market_tools(mcp, agent):
             # Get market data
             data = await get_raw_market_data(symbol, asset_type, timeframe)
             
-            # Check for error
-            if "error" in data:
-                return data
-            
             # Process the data
             from market.data_processor import MarketDataProcessor
             
@@ -115,12 +128,12 @@ def register_market_tools(mcp, agent):
             time_series_key = next((k for k in data.keys() if "Time Series" in k or "Digital Currency" in k), None)
             
             if not time_series_key or not data.get(time_series_key):
-                return {"error": f"No time series data available for {symbol}"}
+                raise ToolError(f"No time series data available for {symbol}")
             
             # Process the data
             df = MarketDataProcessor.process_time_series_data(data, time_series_key, asset_type)
             if df is None or df.empty:
-                return {"error": "Failed to process time series data"}
+                raise ToolError("Failed to process time series data")
             
             # Get timeframe-specific parameters
             params = TimeframeParameters.get_parameters(timeframe)
@@ -210,9 +223,12 @@ def register_market_tools(mcp, agent):
                     "change_percent": change_percent
                 }
             }
+        except ToolError as e:
+            # Re-raise ToolError as-is
+            raise
         except Exception as e:
             logger.error(f"Error calculating technical indicators for {symbol}: {e}")
-            return {"error": f"Failed to calculate technical indicators: {str(e)}"}
+            raise ToolError(f"Failed to calculate technical indicators: {str(e)}")
     
     @mcp.tool()
     async def get_news_sentiment(symbol: str):
@@ -225,11 +241,15 @@ def register_market_tools(mcp, agent):
         Returns:
             Dictionary containing sentiment data and news articles
         """
-        from main import app
-        
         try:
+            # Get app and http_session
+            from main import app
+            http_session = app.state.http
+            
             # Fetch news sentiment from market manager
-            sentiment_data = await app.state.market_manager.get_news_sentiment(symbol)
+            sentiment_data = await app.state.market_manager.get_news_sentiment(
+                symbol, http_session=http_session
+            )
             
             if sentiment_data and "feed" in sentiment_data:
                 articles = sentiment_data["feed"]
@@ -329,13 +349,14 @@ def register_market_tools(mcp, agent):
         Returns:
             Dictionary containing search results and sources
         """
-        from main import app
-        
-        # Validate search type
-        if search_type not in ["web", "news"]:
-            search_type = "web"  # Default to web search
-        
         try:
+            # Get the agent instance with tavily client
+            from main import app
+            
+            # Validate search type
+            if search_type not in ["web", "news"]:
+                search_type = "web"  # Default to web search
+            
             # Configure search parameters
             search_params = {
                 "query": query,
@@ -388,12 +409,8 @@ def register_market_tools(mcp, agent):
                 
         except Exception as e:
             # Return error information
-            return {
-                "query": query,
-                "error": f"Search failed: {str(e)}",
-                "results": [],
-                "timestamp": datetime.now(UTC).isoformat()
-            }
+            logger.error(f"Error in search_market_information: {str(e)}")
+            raise ToolError(f"Search failed: {str(e)}")
 
 async def add_market_analysis_to_context(agent, context, symbol, asset_type, timeframe):
     """
@@ -409,9 +426,10 @@ async def add_market_analysis_to_context(agent, context, symbol, asset_type, tim
     Returns:
         None - modifies the context in place
     """
-    from mcp_server import mcp
-    
     try:
+        # Get the MCP instance
+        from mcp_server import mcp
+        
         # Get technical analysis data
         tech_data = await mcp.tools.get_technical_indicators(symbol, asset_type, timeframe)
         price_levels = await mcp.tools.get_price_levels(symbol, asset_type, timeframe)

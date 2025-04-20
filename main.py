@@ -41,7 +41,9 @@ async def lifespan(app: FastAPI):
             logger.warning("TOGETHER_API_KEY not found in environment")
             
         # Create a shared aiohttp session with no timeout to allow long-running operations
-        shared_session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=None))
+        app.state.http = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=None))
+        # Initialize simple in-memory cache for Alpha Vantage
+        app.state.cache = {}
         
         # Initialize MCP server first (new order of initialization)
         app.state.mcp = mcp
@@ -87,8 +89,8 @@ async def lifespan(app: FastAPI):
             await app.state.social_media_handler.stop_telegram()
         
         # Close the shared aiohttp session
-        if shared_session and not shared_session.closed:
-            await shared_session.close()
+        if hasattr(app.state, 'http') and not app.state.http.closed:
+            await app.state.http.close()
         
         logger.info("Shutdown sequence completed")
 
@@ -168,13 +170,14 @@ async def chat(message: Message):
         return {"response": "I'm having trouble with my AI circuits right now. Please try again later."}
 
 @app.get("/health")
+@app.get("/healthz")
 async def health_check():
     """Health check endpoint"""
     try:
         if not hasattr(app.state, 'agent'):
             raise HTTPException(status_code=503, detail="Services not initialized")
         return {
-            "status": "healthy",
+            "status": "ok",
             "timestamp": datetime.now(UTC).isoformat(),
             "agent_status": "ready"
         }

@@ -1,6 +1,6 @@
 aiocoap==0.4.12
 aiohappyeyeballs==2.4.4
-aiohttp==3.11.12
+aiohttp>=3.9
 aiosignal==1.3.2
 annotated-types==0.7.0
 anyio==4.8.0
@@ -16,7 +16,7 @@ contourpy==1.3.1
 cycler==0.12.1
 distro==1.9.0
 eval_type_backport==0.2.2
-fastapi==0.115.6
+fastapi==0.111.*
 filelock==3.16.1
 fonttools==4.55.3
 frozendict==2.3.10
@@ -36,7 +36,7 @@ kiwisolver==1.4.8
 markdown-it-py==3.0.0
 matplotlib==3.10.0
 mdurl==0.1.2
-mcp[cli]==0.1.0
+modelcontextprotocol-python-sdk>=0.2
 moralis==0.1.49
 multidict==6.1.0
 nest==0.4.3
@@ -52,7 +52,7 @@ propcache==0.2.1
 pyarrow==18.1.0
 pyasn1==0.6.1
 pyasn1_modules==0.4.1
-pydantic==2.10.4
+pydantic==2.*
 pydantic-settings==2.7.1
 pydantic_core==2.27.2
 Pygments==2.19.1
@@ -86,3 +86,6 @@ websockets==14.2
 wheel==0.45.1
 wsproto==1.2.0
 yarl==1.18.3
+ruff
+mypy
+pytest

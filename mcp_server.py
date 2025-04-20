@@ -1,4 +1,5 @@
 from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp.exceptions import ToolError  # ← correct ToolError
 import logging
 import os
 from datetime import datetime, UTC
@@ -17,6 +18,17 @@ mcp = FastMCP(
     max_context_tokens=32000,  # Adjust based on model requirements
     max_request_timeout=60000  # 60 seconds max for requests
 )
+
+# Register all MCP tools
+from market import mcp_tools, mcp_multi_timeframe, mcp_price_levels
+from aiagent import CipherAgent
+
+agent = CipherAgent()  # shared LLM helper
+
+# Register all analysis helpers
+mcp_tools.register_market_tools(mcp, agent)
+mcp_multi_timeframe.register_multi_timeframe_tools(mcp, agent)
+mcp_price_levels.register_price_level_tools(mcp, agent)
 
 # Export the mcp instance for use in main.py
 __all__ = ["mcp"]
@@ -90,6 +102,11 @@ async def provide_memory_context(client_context):
             
         except Exception as e:
             mcp_logger.error(f"Error providing memory context: {e}", exc_info=True)
+
+# Health probe
+@mcp.tool("ping")
+async def ping():
+    return "pong"
 
 # Market overview resource
 @mcp.resource("market_overview")
@@ -197,7 +214,7 @@ async def get_stock_info(symbol: str):
         overview = await app.state.market_manager.get_stock_overview(symbol)
         return overview
     except Exception as e:
-        return {"error": f"Failed to get stock information for {symbol}: {str(e)}"}
+        raise ToolError(f"Failed to get stock information for {symbol}: {str(e)}")
 
 @mcp.resource("crypto/{symbol}")
 async def get_crypto_info(symbol: str):
@@ -210,4 +227,4 @@ async def get_crypto_info(symbol: str):
         # Extract and return formatted information
         return data
     except Exception as e:
-        return {"error": f"Failed to get crypto information for {symbol}: {str(e)}"}
+        raise ToolError(f"Failed to get crypto information for {symbol}: {str(e)}")

@@ -5,6 +5,7 @@ from market.price_levels import PriceLevelAnalyzer, LevelType
 from market.data_processor import MarketDataProcessor
 from market.formatters import DataFormatter
 from datetime import datetime, UTC
+from mcp.server.fastmcp.exceptions import ToolError
 
 logger = logging.getLogger(__name__)
 
@@ -28,14 +29,9 @@ def register_price_level_tools(mcp, agent):
         Returns:
             Dictionary containing support and resistance levels
         """
-        from main import app
-        from market.mcp_tools import get_raw_market_data, get_technical_indicators
-        
         try:
-            # Get market data for primary timeframe
-            tech_data = await get_technical_indicators(symbol, asset_type, timeframe)
-            if "error" in tech_data:
-                return {"error": tech_data["error"]}
+            # Get market data from tools (passing through mcp to avoid circular imports)
+            tech_data = await mcp.tools.get_technical_indicators(symbol, asset_type, timeframe)
             
             # Get current price and ATR
             current_price = tech_data.get("price_data", {}).get("current", 0)
@@ -60,9 +56,7 @@ def register_price_level_tools(mcp, agent):
             all_resistance_levels = {}
             
             # Add primary timeframe data
-            primary_data = await get_raw_market_data(symbol, asset_type, timeframe)
-            if "error" in primary_data:
-                return {"error": primary_data["error"]}
+            primary_data = await mcp.tools.get_raw_market_data(symbol, asset_type, timeframe)
                 
             time_series_key = next((k for k in primary_data.keys() if "Time Series" in k or "Digital Currency" in k), None)
             if time_series_key:
@@ -90,7 +84,7 @@ def register_price_level_tools(mcp, agent):
             
             # Add higher timeframe data
             for tf in higher_timeframes:
-                tf_data = await get_raw_market_data(symbol, asset_type, tf)
+                tf_data = await mcp.tools.get_raw_market_data(symbol, asset_type, tf)
                 if "error" in tf_data:
                     continue
                     
@@ -155,13 +149,12 @@ def register_price_level_tools(mcp, agent):
                 },
                 "timestamp": datetime.now(UTC).isoformat()
             }
+        except ToolError as e:
+            # Re-raise ToolError as-is
+            raise
         except Exception as e:
             logger.error(f"Error getting price levels for {symbol}: {e}")
-            return {
-                "error": f"Failed to calculate price levels: {str(e)}",
-                "symbol": symbol,
-                "timeframe": timeframe
-            }
+            raise ToolError(f"Failed to calculate price levels: {str(e)}")
     
     @mcp.tool()
     async def get_key_price_zones(symbol: str, asset_type: str = "stock", timeframe: str = "daily"):
@@ -179,8 +172,6 @@ def register_price_level_tools(mcp, agent):
         try:
             # Get all levels first
             all_levels = await get_price_levels(symbol, asset_type, timeframe)
-            if "error" in all_levels:
-                return all_levels
             
             # Filter for only high and very high confidence levels
             key_support = [level for level in all_levels["consolidated_support"] 
@@ -204,10 +195,9 @@ def register_price_level_tools(mcp, agent):
                 "timeframe": timeframe,
                 "timestamp": datetime.now(UTC).isoformat()
             }
+        except ToolError as e:
+            # Re-raise ToolError as-is
+            raise
         except Exception as e:
             logger.error(f"Error getting key price zones for {symbol}: {e}")
-            return {
-                "error": f"Failed to identify key price zones: {str(e)}",
-                "symbol": symbol,
-                "timeframe": timeframe
-            }
+            raise ToolError(f"Failed to identify key price zones: {str(e)}")
