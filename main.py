@@ -42,26 +42,27 @@ async def lifespan(app: FastAPI):
             
         # Create a shared aiohttp session with no timeout to allow long-running operations
         app.state.http = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=None))
+        
         # Initialize simple in-memory cache for Alpha Vantage
         app.state.cache = {}
         
-        # Initialize MCP server first (new order of initialization)
+        # Initialize Market Manager for market data access first
+        logger.info("Initializing MarketManager...")
+        app.state.settings = AISettings()
+        app.state.market_manager = MarketManager(app.state.settings)
+        
+        # Initialize MCP server (new order of initialization)
         app.state.mcp = mcp
         logger.info("Initialized MCP server")
         
         # Initialize core components with MCP-exclusive implementation
         logger.info("Initializing MCP-based CipherAgent...")
         app.state.agent = CipherAgent()
+        app.state.agent.market_manager = app.state.market_manager
         
         # Initialize SocialMediaHandler directly
         logger.info("Initializing SocialMediaHandler...")
         app.state.social_media_handler = SocialMediaHandler(app.state.agent)
-        
-        # Initialize Market Manager for market data access
-        logger.info("Initializing MarketManager...")
-        app.state.settings = AISettings()
-        app.state.market_manager = MarketManager(app.state.settings)
-        app.state.agent.market_manager = app.state.market_manager
         
         # Initialize simple job store for async tasks
         app.state.jobs = {}

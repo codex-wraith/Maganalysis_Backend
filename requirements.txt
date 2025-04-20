@@ -86,6 +86,3 @@ websockets==14.2
 wheel==0.45.1
 wsproto==1.2.0
 yarl==1.18.3
-ruff
-mypy
-pytest

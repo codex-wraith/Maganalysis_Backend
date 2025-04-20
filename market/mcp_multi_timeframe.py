@@ -7,7 +7,7 @@ from mcp.server.fastmcp.exceptions import ToolError
 
 logger = logging.getLogger(__name__)
 
-def register_multi_timeframe_tools(mcp, agent):
+def register_multi_timeframe_tools(mcp, app, market_manager, http_session, agent):
     """
     Register multi-timeframe analysis tools with MCP.
     This completely replaces the previous multi-timeframe implementation.
@@ -27,8 +27,6 @@ def register_multi_timeframe_tools(mcp, agent):
         Returns:
             Comprehensive multi-timeframe analysis with support/resistance levels
         """
-        from main import app
-        
         try:
             # Define timeframe hierarchy based on CipherAgent's implementation
             timeframe_hierarchy = {

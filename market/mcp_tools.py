@@ -11,7 +11,7 @@ from datetime import datetime, UTC
 
 logger = logging.getLogger(__name__)
 
-def register_market_tools(mcp, agent):
+def register_market_tools(mcp, app, market_manager, http_session, agent):
     """
     Register all market tools with the MCP server.
     These tools REPLACE the existing market data functionality.
@@ -31,11 +31,6 @@ def register_market_tools(mcp, agent):
             Raw dictionary containing the market data
         """
         try:
-            # Get the market manager and http_session from the app state
-            from main import app
-            market_manager = app.state.market_manager
-            http_session = app.state.http
-            
             # Determine if this is a crypto symbol
             is_crypto = asset_type.lower() == "crypto"
             
@@ -242,12 +237,8 @@ def register_market_tools(mcp, agent):
             Dictionary containing sentiment data and news articles
         """
         try:
-            # Get app and http_session
-            from main import app
-            http_session = app.state.http
-            
             # Fetch news sentiment from market manager
-            sentiment_data = await app.state.market_manager.get_news_sentiment(
+            sentiment_data = await market_manager.get_news_sentiment(
                 symbol, http_session=http_session
             )
             
@@ -350,9 +341,6 @@ def register_market_tools(mcp, agent):
             Dictionary containing search results and sources
         """
         try:
-            # Get the agent instance with tavily client
-            from main import app
-            
             # Validate search type
             if search_type not in ["web", "news"]:
                 search_type = "web"  # Default to web search
@@ -384,7 +372,7 @@ def register_market_tools(mcp, agent):
                 search_params["include_raw_content"] = False
                 
             # Execute the search
-            search_response = await app.state.agent.tavily_client.search(**search_params)
+            search_response = await agent.tavily_client.search(**search_params)
             
             # Extract and format results
             results = []

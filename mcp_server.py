@@ -19,16 +19,22 @@ mcp = FastMCP(
     max_request_timeout=60000  # 60 seconds max for requests
 )
 
+# Import app, http, and market_manager from main
+from main import app
+http = app.state.http          # shared aiohttp session
+mm = app.state.market_manager  # market manager instance
+
 # Register all MCP tools
 from market import mcp_tools, mcp_multi_timeframe, mcp_price_levels
 from aiagent import CipherAgent
 
+# Create shared agent instance
 agent = CipherAgent()  # shared LLM helper
 
-# Register all analysis helpers
-mcp_tools.register_market_tools(mcp, agent)
-mcp_multi_timeframe.register_multi_timeframe_tools(mcp, agent)
-mcp_price_levels.register_price_level_tools(mcp, agent)
+# Register all analysis helpers with correct parameters
+mcp_tools.register_market_tools(mcp, app, mm, http, agent)
+mcp_multi_timeframe.register_multi_timeframe_tools(mcp, app, mm, http, agent)
+mcp_price_levels.register_price_level_tools(mcp, app, mm, http, agent)
 
 # Export the mcp instance for use in main.py
 __all__ = ["mcp"]
@@ -54,6 +60,11 @@ async def handle_global_error(error, request_data=None):
         "message": "An unexpected error occurred. Our team has been notified."
     }
 
+# Health probe tool
+@mcp.tool("ping")
+async def ping():
+    return "pong"
+
 @mcp.on_conversation_start
 async def provide_memory_context(client_context):
     """
@@ -62,8 +73,6 @@ async def provide_memory_context(client_context):
     Args:
         client_context: The MCP client context
     """
-    from main import app
-    
     # Extract user information from the context
     user_id = client_context.get("user_id")
     platform = client_context.get("platform", "web")
@@ -103,17 +112,10 @@ async def provide_memory_context(client_context):
         except Exception as e:
             mcp_logger.error(f"Error providing memory context: {e}", exc_info=True)
 
-# Health probe
-@mcp.tool("ping")
-async def ping():
-    return "pong"
-
 # Market overview resource
 @mcp.resource("market_overview")
 async def get_market_overview():
     """Get market overview data focused on market sentiment"""
-    from main import app
-    
     # Get crypto and general market sentiment data
     crypto_data = []
     market_mood = None
@@ -123,9 +125,10 @@ async def get_market_overview():
     
     # Get overall market sentiment
     try:
-        market_sentiment = await app.state.market_manager.get_news_sentiment(
+        market_sentiment = await mm.get_news_sentiment(
             topics="financial_markets", 
-            limit=50
+            limit=50,
+            http_session=http
         )
         
         if market_sentiment and "feed" in market_sentiment:
@@ -152,7 +155,7 @@ async def get_market_overview():
     
     # Get Bitcoin sentiment
     try:
-        btc_sentiment = await app.state.market_manager.get_news_sentiment(ticker="BTC")
+        btc_sentiment = await mm.get_news_sentiment(ticker="BTC", http_session=http)
         btc_mood = None
         btc_score = None
         
@@ -207,11 +210,9 @@ async def get_market_overview():
 @mcp.resource("stock/{symbol}")
 async def get_stock_info(symbol: str):
     """Get basic information for a stock symbol"""
-    from main import app
-    
     try:
         # Use the market manager to get stock information
-        overview = await app.state.market_manager.get_stock_overview(symbol)
+        overview = await mm.get_stock_overview(symbol, http_session=http)
         return overview
     except Exception as e:
         raise ToolError(f"Failed to get stock information for {symbol}: {str(e)}")
@@ -219,12 +220,19 @@ async def get_stock_info(symbol: str):
 @mcp.resource("crypto/{symbol}")
 async def get_crypto_info(symbol: str):
     """Get basic information for a cryptocurrency"""
-    from main import app
-    
     try:
         # Get current price
-        data = await app.state.market_manager.get_crypto_daily(symbol, "USD")
+        data = await mm.get_crypto_daily(symbol, "USD", http_session=http)
         # Extract and return formatted information
         return data
     except Exception as e:
         raise ToolError(f"Failed to get crypto information for {symbol}: {str(e)}")
+
+# Allow listing tools for debugging
+if __name__ == "__main__":
+    import sys
+    if len(sys.argv) > 1 and sys.argv[1] == "list-tools":
+        tools = mcp.list_tools()
+        print("Available MCP tools:")
+        for tool in tools:
+            print(f"- {tool}")

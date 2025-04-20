@@ -9,7 +9,7 @@ from mcp.server.fastmcp.exceptions import ToolError
 
 logger = logging.getLogger(__name__)
 
-def register_price_level_tools(mcp, agent):
+def register_price_level_tools(mcp, app, market_manager, http_session, agent):
     """
     Register price level analysis tools with MCP.
     This completely replaces previous price level analysis implementation.
