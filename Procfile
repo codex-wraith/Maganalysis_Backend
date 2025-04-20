@@ -1,0 +1,1 @@
+web: python -m mcp.server.asgi main:mcp
