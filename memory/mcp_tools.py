@@ -1,11 +1,8 @@
 from typing import Dict, List, Any, Optional
 try:
     from mcp.client import Context
-except ModuleNotFoundError:
-    try:
-        from mcp.server.fastmcp.client import Context
-    except ModuleNotFoundError:
-        # Fallback import path
+except ImportError:
+    from mcp.client.fastclient import Context
         from mcp.server.fastmcp import Context
 import logging
 import json

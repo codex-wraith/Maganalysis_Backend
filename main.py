@@ -269,12 +269,8 @@ async def run_analysis_job(app, job_id: str, request: AssetAnalysisRequest):
         # Create an MCP context for analysis
         try:
             from mcp.client import Context
-        except ModuleNotFoundError:
-            try:
-                from mcp.server.fastmcp.client import Context
-            except ModuleNotFoundError:
-                # Fallback import path
-                from mcp.server.fastmcp import Context
+        except ImportError:
+            from mcp.client.fastclient import Context
         
         # Call the analyze_asset method (the MCP-only implementation)
         analysis = await app.state.agent.analyze_asset(
