@@ -99,17 +99,21 @@ class CipherAgent:
     
     def _register_market_tools(self):
         """Register market analysis tools with MCP"""
+        from main import app
+        http = app.state.http
+        market_manager = app.state.market_manager
+        
         # Import and register market tools
         from market.mcp_tools import register_market_tools
-        register_market_tools(mcp, self)
+        register_market_tools(mcp, app, market_manager, http, self)
         
         # Register multi-timeframe tools
         from market.mcp_multi_timeframe import register_multi_timeframe_tools
-        register_multi_timeframe_tools(mcp, self)
+        register_multi_timeframe_tools(mcp, app, market_manager, http, self)
         
         # Register price level tools
         from market.mcp_price_levels import register_price_level_tools
-        register_price_level_tools(mcp, self)
+        register_price_level_tools(mcp, app, market_manager, http, self)
     
     def _register_memory_tools(self):
         """Register memory management tools with MCP"""

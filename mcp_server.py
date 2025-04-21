@@ -236,17 +236,54 @@ async def get_crypto_info(symbol: str):
     except Exception as e:
         raise ToolError(f"Failed to get crypto information for {symbol}: {str(e)}")
 
+# Add health probe tool
+@mcp.tool("ping")
+async def ping():
+    return "pong"
+
 # Allow listing tools for debugging
 if __name__ == "__main__":
     import sys
     if len(sys.argv) > 1 and sys.argv[1] == "list-tools":
-        # Register tools before listing
+        # Create minimal dependencies for tool registration
+        import asyncio
+        import aiohttp
+        from aiagent import CipherAgent
+        from market.market_manager import MarketManager
+        
+        async def init_and_list_tools():
+            # Create a temporary session just for the test
+            async with aiohttp.ClientSession() as session:
+                # Create minimal app state
+                class App:
+                    class State:
+                        def __init__(self):
+                            self.http = session
+                            self.cache = {}
+                            self.market_manager = MarketManager(session)
+                    
+                    def __init__(self):
+                        self.state = self.State()
+                
+                app_mock = App()
+                
+                # Create agent
+                agent = CipherAgent()
+                
+                # Register tools 
+                from market import mcp_tools, mcp_multi_timeframe, mcp_price_levels
+                mcp_tools.register_market_tools(mcp, app_mock, app_mock.state.market_manager, session, agent)
+                mcp_multi_timeframe.register_multi_timeframe_tools(mcp, app_mock, app_mock.state.market_manager, session, agent)
+                mcp_price_levels.register_price_level_tools(mcp, app_mock, app_mock.state.market_manager, session, agent)
+                
+                # List tools
+                tools = mcp.list_tools()
+                print("Available MCP tools:")
+                for tool in tools:
+                    print(f"- {tool}")
+        
         try:
-            register_mcp_tools()
-            tools = mcp.list_tools()
-            print("Available MCP tools:")
-            for tool in tools:
-                print(f"- {tool}")
+            asyncio.run(init_and_list_tools())
         except Exception as e:
             print(f"Error listing tools: {e}")
             import traceback
