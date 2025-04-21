@@ -1,5 +1,6 @@
 import logging
 import json
+import aiohttp
 from typing import Dict, Any, List, Optional
 from market.price_levels import PriceLevelAnalyzer, LevelType
 from datetime import datetime, UTC

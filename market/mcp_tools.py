@@ -6,6 +6,7 @@ import logging
 import json
 import os
 import time
+import aiohttp
 from typing import Dict, Any, Optional
 from datetime import datetime, UTC
 

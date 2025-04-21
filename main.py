@@ -17,7 +17,7 @@ from hypercorn.asyncio import serve
 from aisettings import AISettings
 from market.market_manager import MarketManager
 from market.indicators import TechnicalIndicators
-from mcp_server import mcp
+from mcp_server import mcp, register_mcp_tools
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -41,7 +41,8 @@ async def lifespan(app: FastAPI):
             logger.warning("TOGETHER_API_KEY not found in environment")
             
         # Create a shared aiohttp session with no timeout to allow long-running operations
-        app.state.http = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=None))
+        shared_session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=None))
+        app.state.http = shared_session
         
         # Initialize simple in-memory cache for Alpha Vantage
         app.state.cache = {}
@@ -49,11 +50,16 @@ async def lifespan(app: FastAPI):
         # Initialize Market Manager for market data access first
         logger.info("Initializing MarketManager...")
         app.state.settings = AISettings()
-        app.state.market_manager = MarketManager(app.state.settings)
+        app.state.market_manager = MarketManager(shared_session)
         
         # Initialize MCP server (new order of initialization)
         app.state.mcp = mcp
         logger.info("Initialized MCP server")
+        
+        # Register MCP tools after initializing the market manager
+        logger.info("Registering MCP tools...")
+        register_mcp_tools()
+        logger.info("MCP tools registered successfully")
         
         # Initialize core components with MCP-exclusive implementation
         logger.info("Initializing MCP-based CipherAgent...")

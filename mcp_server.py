@@ -1,5 +1,5 @@
 from mcp.server.fastmcp import FastMCP
-from mcp.server.fastmcp.exceptions import ToolError  # ← correct ToolError
+from mcp.server.fastmcp.exceptions import ToolError
 import logging
 import os
 from datetime import datetime, UTC
@@ -20,9 +20,12 @@ mcp = FastMCP(
 )
 
 # Import app, http, and market_manager from main
-from main import app
-http = app.state.http          # shared aiohttp session
-mm = app.state.market_manager  # market manager instance
+# Import app only when needed, not at module level
+def get_app_dependencies():
+    from main import app
+    http = app.state.http          # shared aiohttp session
+    mm = app.state.market_manager  # market manager instance
+    return app, http, mm
 
 # Register all MCP tools
 from market import mcp_tools, mcp_multi_timeframe, mcp_price_levels
@@ -31,13 +34,18 @@ from aiagent import CipherAgent
 # Create shared agent instance
 agent = CipherAgent()  # shared LLM helper
 
-# Register all analysis helpers with correct parameters
-mcp_tools.register_market_tools(mcp, app, mm, http, agent)
-mcp_multi_timeframe.register_multi_timeframe_tools(mcp, app, mm, http, agent)
-mcp_price_levels.register_price_level_tools(mcp, app, mm, http, agent)
+# Only register tools when needed
+def register_mcp_tools():
+    # Get dependencies when needed
+    app, http, mm = get_app_dependencies()
+    
+    # Register all analysis helpers with correct parameters
+    mcp_tools.register_market_tools(mcp, app, mm, http, agent)
+    mcp_multi_timeframe.register_multi_timeframe_tools(mcp, app, mm, http, agent)
+    mcp_price_levels.register_price_level_tools(mcp, app, mm, http, agent)
 
-# Export the mcp instance for use in main.py
-__all__ = ["mcp"]
+# Export the mcp instance and registration function for use in main.py
+__all__ = ["mcp", "register_mcp_tools"]
 
 # Register global error handler
 @mcp.on_error
@@ -232,7 +240,14 @@ async def get_crypto_info(symbol: str):
 if __name__ == "__main__":
     import sys
     if len(sys.argv) > 1 and sys.argv[1] == "list-tools":
-        tools = mcp.list_tools()
-        print("Available MCP tools:")
-        for tool in tools:
-            print(f"- {tool}")
+        # Register tools before listing
+        try:
+            register_mcp_tools()
+            tools = mcp.list_tools()
+            print("Available MCP tools:")
+            for tool in tools:
+                print(f"- {tool}")
+        except Exception as e:
+            print(f"Error listing tools: {e}")
+            import traceback
+            traceback.print_exc()
