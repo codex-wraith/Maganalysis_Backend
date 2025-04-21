@@ -2,7 +2,14 @@ import logging
 import asyncio
 import os
 from mcp_server import mcp
-from mcp.client import Context
+try:
+    from mcp.client import Context
+except ModuleNotFoundError:
+    try:
+        from mcp.server.fastmcp.client import Context
+    except ModuleNotFoundError:
+        # Fallback import path
+        from mcp.server.fastmcp import Context
 from typing import Dict, Any, Optional
 
 logger = logging.getLogger(__name__)

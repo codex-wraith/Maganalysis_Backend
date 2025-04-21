@@ -7,7 +7,14 @@ from datetime import datetime, UTC
 from typing import Dict, List, Any, Optional, Tuple, Union
 
 from mcp_server import mcp
-from mcp.client import Context
+try:
+    from mcp.client import Context
+except ModuleNotFoundError:
+    try:
+        from mcp.server.fastmcp.client import Context
+    except ModuleNotFoundError:
+        # Fallback import path
+        from mcp.server.fastmcp import Context
 from aisettings import AISettings
 from memory.message_memory import MessageMemoryManager
 from prompts.prompt_manager import PromptManager

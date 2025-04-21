@@ -34,18 +34,10 @@ from aiagent import CipherAgent
 # Create shared agent instance
 agent = CipherAgent()  # shared LLM helper
 
-# Only register tools when needed
-def register_mcp_tools():
-    # Get dependencies when needed
-    app, http, mm = get_app_dependencies()
-    
-    # Register all analysis helpers with correct parameters
-    mcp_tools.register_market_tools(mcp, app, mm, http, agent)
-    mcp_multi_timeframe.register_multi_timeframe_tools(mcp, app, mm, http, agent)
-    mcp_price_levels.register_price_level_tools(mcp, app, mm, http, agent)
+# Tools are registered by the agent at initialization time
 
-# Export the mcp instance and registration function for use in main.py
-__all__ = ["mcp", "register_mcp_tools"]
+# Export only the mcp instance for use in main.py
+__all__ = ["mcp"]
 
 # Register global error handler
 @mcp.on_error

@@ -17,7 +17,7 @@ from hypercorn.asyncio import serve
 from aisettings import AISettings
 from market.market_manager import MarketManager
 from market.indicators import TechnicalIndicators
-from mcp_server import mcp, register_mcp_tools
+from mcp_server import mcp
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -56,10 +56,8 @@ async def lifespan(app: FastAPI):
         app.state.mcp = mcp
         logger.info("Initialized MCP server")
         
-        # Register MCP tools after initializing the market manager
-        logger.info("Registering MCP tools...")
-        register_mcp_tools()
-        logger.info("MCP tools registered successfully")
+        # MCP tools will be registered when needed directly through the agent
+        logger.info("MCP server initialized - tools will be registered via agent")
         
         # Initialize core components with MCP-exclusive implementation
         logger.info("Initializing MCP-based CipherAgent...")
@@ -269,7 +267,14 @@ async def run_analysis_job(app, job_id: str, request: AssetAnalysisRequest):
     """
     try:
         # Create an MCP context for analysis
-        from mcp.client import Context
+        try:
+            from mcp.client import Context
+        except ModuleNotFoundError:
+            try:
+                from mcp.server.fastmcp.client import Context
+            except ModuleNotFoundError:
+                # Fallback import path
+                from mcp.server.fastmcp import Context
         
         # Call the analyze_asset method (the MCP-only implementation)
         analysis = await app.state.agent.analyze_asset(
