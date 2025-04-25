@@ -267,10 +267,7 @@ async def run_analysis_job(app, job_id: str, request: AssetAnalysisRequest):
     """
     try:
         # Create an MCP context for analysis
-        try:
-            from mcp.client import Context
-        except ImportError:
-            from mcp.client.fastclient import Context
+        from mcp.server.fastmcp import Context
         
         # Call the analyze_asset method (the MCP-only implementation)
         analysis = await app.state.agent.analyze_asset(

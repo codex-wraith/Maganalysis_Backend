@@ -2,10 +2,7 @@ import logging
 import asyncio
 import os
 from mcp_server import mcp
-try:
-    from mcp.client import Context
-except ImportError:
-    from mcp.client.fastclient import Context
+from mcp.server.fastmcp import Context
 from typing import Dict, Any, Optional
 
 logger = logging.getLogger(__name__)

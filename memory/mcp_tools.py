@@ -1,9 +1,5 @@
 from typing import Dict, List, Any, Optional
-try:
-    from mcp.client import Context
-except ImportError:
-    from mcp.client.fastclient import Context
-        from mcp.server.fastmcp import Context
+from mcp.server.fastmcp import Context
 import logging
 import json
 import os

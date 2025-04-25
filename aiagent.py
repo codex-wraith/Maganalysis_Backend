@@ -7,10 +7,7 @@ from datetime import datetime, UTC
 from typing import Dict, List, Any, Optional, Tuple, Union
 
 from mcp_server import mcp
-try:
-    from mcp.client import Context
-except ImportError:
-    from mcp.client.fastclient import Context
+from mcp.server.fastmcp import Context
 from aisettings import AISettings
 from memory.message_memory import MessageMemoryManager
 from prompts.prompt_manager import PromptManager
