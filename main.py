@@ -64,6 +64,11 @@ async def lifespan(app: FastAPI):
         app.state.agent = CipherAgent()
         app.state.agent.market_manager = app.state.market_manager
         
+        # Assign the agent to mcp_server to break circular import
+        from mcp_server import agent as mcp_agent_ref
+        import mcp_server
+        mcp_server.agent = app.state.agent
+        
         # Initialize SocialMediaHandler directly
         logger.info("Initializing SocialMediaHandler...")
         app.state.social_media_handler = SocialMediaHandler(app.state.agent)

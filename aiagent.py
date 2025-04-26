@@ -6,6 +6,7 @@ import re
 from datetime import datetime, UTC
 from typing import Dict, List, Any, Optional, Tuple, Union
 
+# Import only mcp, not anything agent-related from mcp_server
 from mcp_server import mcp
 from mcp.server.fastmcp import Context
 from aisettings import AISettings

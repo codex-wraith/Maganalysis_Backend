@@ -29,10 +29,13 @@ def get_app_dependencies():
 
 # Register all MCP tools
 from market import mcp_tools, mcp_multi_timeframe, mcp_price_levels
-from aiagent import CipherAgent
 
-# Create shared agent instance
-agent = CipherAgent()  # shared LLM helper
+# Remove the circular import - we'll create agent later in initialization
+# from aiagent import CipherAgent
+# agent = CipherAgent()  # shared LLM helper
+
+# Create a placeholder for the agent
+agent = None  # Will be set from main.py
 
 # Tools are registered by the agent at initialization time
 
