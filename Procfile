@@ -1,1 +1,1 @@
-web: python -m mcp.server.asgi main:mcp
+web: hypercorn main:app --bind 0.0.0.0:$PORT
