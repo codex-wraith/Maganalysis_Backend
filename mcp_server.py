@@ -11,12 +11,10 @@ logging.basicConfig(
 )
 mcp_logger = logging.getLogger("maganalysis.mcp")
 
-# Initialize the MCP server with error handlers
+# Initialize the MCP server with minimal configuration
 mcp = FastMCP(
-    "Maganalysis", 
-    error_logger=mcp_logger,
-    max_context_tokens=32000,  # Adjust based on model requirements
-    max_request_timeout=60000  # 60 seconds max for requests
+    "Maganalysis",
+    max_context_tokens=32000  # Adjust based on model requirements
 )
 
 # Import app, http, and market_manager from main
@@ -42,10 +40,11 @@ agent = None  # Will be set from main.py
 # Export only the mcp instance for use in main.py
 __all__ = ["mcp"]
 
-# Register global error handler
-@mcp.on_error
-async def handle_global_error(error, request_data=None):
-    """Global error handler for MCP server"""
+# Skip error handler registration for now as it might be causing issues
+# We'll add proper error handling directly in the route handlers
+
+def handle_global_error(error, request_data=None):
+    """Global error handler - used directly in code but not registered as a handler"""
     error_id = f"err-{os.urandom(4).hex()}"
     mcp_logger.error(f"MCP Error {error_id}: {error}", exc_info=True)
     
@@ -68,52 +67,17 @@ async def handle_global_error(error, request_data=None):
 async def ping():
     return "pong"
 
-@mcp.on_conversation_start
-async def provide_memory_context(client_context):
+# Skip conversation handler registration for now as it might be causing issues
+# We'll implement this in a different way if needed
+
+def get_memory_context(user_id, platform="web"):
     """
-    Provides memory context when a conversation starts.
-    
-    Args:
-        client_context: The MCP client context
+    Function to provide memory context when needed.
+    Rather than using the conversation_start handler, we'll call this directly.
     """
-    # Extract user information from the context
-    user_id = client_context.get("user_id")
-    platform = client_context.get("platform", "web")
-    
-    if user_id:
-        try:
-            # Get conversation history
-            conversation_history = await app.state.agent.message_memory.get_conversation_history(
-                platform=platform,
-                user_id=user_id,
-                limit=15  # Include substantial history for better context
-            )
-            
-            # Format and add the conversation history
-            formatted_history = []
-            for msg in conversation_history:
-                role = "assistant" if msg.get('is_response') else "user"
-                formatted_history.append({
-                    "role": role,
-                    "content": msg.get('text', '')
-                })
-            
-            # Ensure client_context exists on the mcp object
-            if not hasattr(mcp, "client_context"):
-                mcp.client_context = {}
-                
-            # Store the history in the client context
-            mcp.client_context[user_id] = {
-                "conversation_history": formatted_history,
-                "platform": platform,
-                "last_updated": datetime.now(UTC).isoformat()
-            }
-            
-            # Log access for debugging
-            mcp_logger.debug(f"Memory context provided for user {user_id} on {platform}: {len(formatted_history)} messages")
-            
-        except Exception as e:
-            mcp_logger.error(f"Error providing memory context: {e}", exc_info=True)
+    # This is just a placeholder - we'll need to call this from within route handlers
+    mcp_logger.info(f"Memory context function defined but not used as handler")
+    return None
 
 # Market overview resource
 @mcp.resource("market_overview")
@@ -125,6 +89,9 @@ async def get_market_overview():
     sentiment_score = None
     article_count = 0
     market_article_count = 0
+    
+    # Get app dependencies first to avoid circular import
+    app, http, mm = get_app_dependencies()
     
     # Get overall market sentiment
     try:
@@ -214,6 +181,9 @@ async def get_market_overview():
 async def get_stock_info(symbol: str):
     """Get basic information for a stock symbol"""
     try:
+        # Get app dependencies first to avoid circular import
+        app, http, mm = get_app_dependencies()
+        
         # Use the market manager to get stock information
         overview = await mm.get_stock_overview(symbol, http_session=http)
         return overview
@@ -224,6 +194,9 @@ async def get_stock_info(symbol: str):
 async def get_crypto_info(symbol: str):
     """Get basic information for a cryptocurrency"""
     try:
+        # Get app dependencies first to avoid circular import
+        app, http, mm = get_app_dependencies()
+        
         # Get current price
         data = await mm.get_crypto_daily(symbol, "USD", http_session=http)
         # Extract and return formatted information
@@ -235,6 +208,9 @@ async def get_crypto_info(symbol: str):
 @mcp.tool("ping")
 async def ping():
     return "pong"
+
+# Functions are registered using decorators based on the MCP Python SDK documentation
+# No need for explicit registration here
 
 # Allow listing tools for debugging
 if __name__ == "__main__":
@@ -272,10 +248,13 @@ if __name__ == "__main__":
                 mcp_price_levels.register_price_level_tools(mcp, app_mock, app_mock.state.market_manager, session, agent)
                 
                 # List tools
-                tools = mcp.list_tools()
-                print("Available MCP tools:")
-                for tool in tools:
-                    print(f"- {tool}")
+                if hasattr(mcp, 'list_tools'):
+                    tools = mcp.list_tools()
+                    print("Available MCP tools:")
+                    for tool in tools:
+                        print(f"- {tool}")
+                else:
+                    print("list_tools method not available on this version of FastMCP")
         
         try:
             asyncio.run(init_and_list_tools())
