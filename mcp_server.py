@@ -80,7 +80,6 @@ def get_memory_context(user_id, platform="web"):
     return None
 
 # Market overview resource
-@mcp.resource("market_overview")
 async def get_market_overview():
     """Get market overview data focused on market sentiment"""
     # Get crypto and general market sentiment data
@@ -177,7 +176,6 @@ async def get_market_overview():
         "timestamp": datetime.now(UTC).isoformat()
     }
 
-@mcp.resource("stock/{symbol}")
 async def get_stock_info(symbol: str):
     """Get basic information for a stock symbol"""
     try:
@@ -190,7 +188,6 @@ async def get_stock_info(symbol: str):
     except Exception as e:
         raise ToolError(f"Failed to get stock information for {symbol}: {str(e)}")
 
-@mcp.resource("crypto/{symbol}")
 async def get_crypto_info(symbol: str):
     """Get basic information for a cryptocurrency"""
     try:
@@ -205,12 +202,34 @@ async def get_crypto_info(symbol: str):
         raise ToolError(f"Failed to get crypto information for {symbol}: {str(e)}")
 
 # Add health probe tool
-@mcp.tool("ping")
 async def ping():
     return "pong"
 
-# Functions are registered using decorators based on the MCP Python SDK documentation
-# No need for explicit registration here
+# Manually register resources to avoid URL validation errors
+try:
+    # Add resources to mcp
+    mcp.add_resource("/market_overview", get_market_overview)
+    mcp.add_resource("/stock/{symbol}", get_stock_info)
+    mcp.add_resource("/crypto/{symbol}", get_crypto_info)
+    
+    # Add ping tool
+    mcp.add_tool("ping", ping)
+    
+    mcp_logger.info("Successfully registered MCP resources using add_resource method")
+except Exception as e:
+    mcp_logger.error(f"Error registering MCP resources: {e}")
+    
+    # Try older style registration (for older MCP versions)
+    try:
+        # First try to use the register methods
+        if hasattr(mcp, 'register_resource'):
+            mcp.register_resource("/market_overview", get_market_overview)
+            mcp.register_resource("/stock/{symbol}", get_stock_info)
+            mcp.register_resource("/crypto/{symbol}", get_crypto_info)
+            mcp.register_tool("ping", ping)
+            mcp_logger.info("Successfully registered MCP resources using register_resource method")
+    except Exception as e2:
+        mcp_logger.error(f"Failed to register resources: {e2}")
 
 # Allow listing tools for debugging
 if __name__ == "__main__":

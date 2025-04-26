@@ -37,7 +37,7 @@ jiter==0.8.2
 kiwisolver==1.4.8
 markdown-it-py==3.0.0
 matplotlib==3.10.0
-mcp>=1.6.0
+mcp==1.6.0
 mdurl==0.1.2
 moralis==0.1.49
 multidict==6.1.0
