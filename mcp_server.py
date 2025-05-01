@@ -205,31 +205,28 @@ async def get_crypto_info(symbol: str):
 async def ping():
     return "pong"
 
-# Manually register resources to avoid URL validation errors
-try:
-    # Add resources to mcp
-    mcp.add_resource("/market_overview", get_market_overview)
-    mcp.add_resource("/stock/{symbol}", get_stock_info)
-    mcp.add_resource("/crypto/{symbol}", get_crypto_info)
-    
-    # Add ping tool
-    mcp.add_tool("ping", ping)
-    
-    mcp_logger.info("Successfully registered MCP resources using add_resource method")
-except Exception as e:
-    mcp_logger.error(f"Error registering MCP resources: {e}")
-    
-    # Try older style registration (for older MCP versions)
-    try:
-        # First try to use the register methods
-        if hasattr(mcp, 'register_resource'):
-            mcp.register_resource("/market_overview", get_market_overview)
-            mcp.register_resource("/stock/{symbol}", get_stock_info)
-            mcp.register_resource("/crypto/{symbol}", get_crypto_info)
-            mcp.register_tool("ping", ping)
-            mcp_logger.info("Successfully registered MCP resources using register_resource method")
-    except Exception as e2:
-        mcp_logger.error(f"Failed to register resources: {e2}")
+# Use decorators with proper URL paths (with leading slashes)
+@mcp.resource("/market_overview")
+async def get_market_overview_wrapper():
+    """Decorator-safe wrapper for get_market_overview"""
+    return await get_market_overview()
+
+@mcp.resource("/stock/{symbol}")
+async def get_stock_info_wrapper(symbol: str):
+    """Decorator-safe wrapper for get_stock_info"""
+    return await get_stock_info(symbol)
+
+@mcp.resource("/crypto/{symbol}")
+async def get_crypto_info_wrapper(symbol: str):
+    """Decorator-safe wrapper for get_crypto_info"""
+    return await get_crypto_info(symbol)
+
+@mcp.tool("ping")
+async def ping_wrapper():
+    """Decorator-safe wrapper for ping"""
+    return await ping()
+
+# No need for manual registration - we're using decorators properly now
 
 # Allow listing tools for debugging
 if __name__ == "__main__":
