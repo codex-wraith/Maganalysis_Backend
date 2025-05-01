@@ -6,9 +6,10 @@ import re
 from datetime import datetime, UTC
 from typing import Dict, List, Any, Optional, Tuple, Union
 
-# Import only mcp, not anything agent-related from mcp_server
-from mcp_server import mcp
-from mcp.server.fastmcp import Context
+# Skip direct MCP imports to prevent circular dependencies
+# We'll either avoid using these or import them when needed
+# from mcp_server import mcp
+# from mcp.server.fastmcp import Context
 from aisettings import AISettings
 from memory.message_memory import MessageMemoryManager
 from prompts.prompt_manager import PromptManager

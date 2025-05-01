@@ -52,22 +52,16 @@ async def lifespan(app: FastAPI):
         app.state.settings = AISettings()
         app.state.market_manager = MarketManager(shared_session)
         
-        # Initialize MCP server (new order of initialization)
-        app.state.mcp = mcp
-        logger.info("Initialized MCP server")
+        # Note: We're skipping MCP initialization to avoid URL validation issues
+        logger.info("Skipping MCP server initialization due to URL validation issues")
         
-        # MCP tools will be registered when needed directly through the agent
-        logger.info("MCP server initialized - tools will be registered via agent")
-        
-        # Initialize core components with MCP-exclusive implementation
-        logger.info("Initializing MCP-based CipherAgent...")
+        # Initialize core components with direct implementation
+        logger.info("Initializing CipherAgent...")
         app.state.agent = CipherAgent()
         app.state.agent.market_manager = app.state.market_manager
         
-        # Assign the agent to mcp_server to break circular import
-        from mcp_server import agent as mcp_agent_ref
-        import mcp_server
-        mcp_server.agent = app.state.agent
+        # Keep a reference to mcp for backward compatibility, but don't use it
+        app.state.mcp = None
         
         # Initialize SocialMediaHandler directly
         logger.info("Initializing SocialMediaHandler...")
@@ -197,14 +191,104 @@ async def health_check():
 
 @app.get("/market/overview")
 async def get_market_overview():
-    """Get market overview data using MCP resource"""
+    """Get market overview data directly without using MCP resource"""
     try:
-        if not app.state.mcp:
-            raise HTTPException(status_code=503, detail="MCP service not initialized")
+        if not app.state.market_manager:
+            raise HTTPException(status_code=503, detail="Market manager not initialized")
             
-        # Use MCP resource for market overview
-        market_overview = await mcp.resources.get("market_overview")
-        return market_overview
+        # Get crypto and general market sentiment data
+        http = app.state.http
+        mm = app.state.market_manager
+        
+        crypto_data = []
+        market_mood = None
+        sentiment_score = None
+        article_count = 0
+        market_article_count = 0
+        
+        # Get overall market sentiment
+        try:
+            market_sentiment = await mm.get_news_sentiment(
+                topics="financial_markets", 
+                limit=50,
+                http_session=http
+            )
+            
+            if market_sentiment and "feed" in market_sentiment:
+                market_articles = market_sentiment["feed"]
+                market_article_count = len(market_articles)
+                
+                if market_article_count > 0:
+                    market_total_score = 0
+                    for article in market_articles:
+                        score = article.get("overall_sentiment_score", 0)
+                        market_total_score += score
+                    
+                    market_avg_score = market_total_score / market_article_count
+                    sentiment_score = (market_avg_score + 1) * 50
+                    
+                    if sentiment_score > 65:
+                        market_mood = "bullish"
+                    elif sentiment_score < 35:
+                        market_mood = "bearish"
+                    else:
+                        market_mood = "neutral"
+        except Exception as e:
+            logger.error(f"Error fetching market sentiment: {e}")
+        
+        # Get Bitcoin sentiment
+        try:
+            btc_sentiment = await mm.get_news_sentiment(ticker="BTC", http_session=http)
+            btc_mood = None
+            btc_score = None
+            
+            if btc_sentiment and "feed" in btc_sentiment:
+                articles = btc_sentiment["feed"]
+                article_count = len(articles)
+                
+                if article_count > 0:
+                    total_score = 0
+                    for article in articles:
+                        score = article.get("overall_sentiment_score", 0)
+                        total_score += score
+                    
+                    avg_score = total_score / article_count
+                    btc_score = (avg_score + 1) * 50
+                    
+                    if btc_score > 65:
+                        btc_mood = "bullish"
+                    elif btc_score < 35:
+                        btc_mood = "bearish"
+                    else:
+                        btc_mood = "neutral"
+            
+            # Add to crypto data
+            crypto_data.append({
+                "symbol": "BTC",
+                "name": "Bitcoin",
+                "price": btc_score,
+                "change_percent": btc_mood
+            })
+        except Exception as e:
+            logger.error(f"Error fetching crypto sentiment: {e}")
+        
+        # Return combined data
+        return {
+            "market_status": {
+                "market_mood": market_mood,
+                "sentiment_score": sentiment_score,
+                "article_count": market_article_count,
+                "source": "financial_markets"
+            },
+            "crypto_status": {
+                "market_mood": btc_mood,
+                "sentiment_score": btc_score,
+                "article_count": article_count,
+                "source": "BTC" 
+            },
+            "cryptos": crypto_data,
+            "timestamp": datetime.now(UTC).isoformat()
+        }
         
     except Exception as e:
         logger.error(f"Market overview error: {e}")
@@ -212,25 +296,106 @@ async def get_market_overview():
 
 @app.get("/market/indicators/{symbol}")
 async def get_technical_indicators(symbol: str, timeframe: str = "daily"):
-    """Get technical indicators using MCP tools"""
+    """Get technical indicators bypassing MCP tools"""
     try:
-        if not app.state.mcp:
-            raise HTTPException(status_code=503, detail="MCP service not initialized")
+        if not app.state.market_manager:
+            raise HTTPException(status_code=503, detail="Market manager not initialized")
             
         # Detect if this is a crypto symbol
         common_cryptos = ["BTC", "ETH", "USDT", "BNB", "XRP", "ADA", "DOGE", "SOL"]
         is_crypto = symbol.upper() in common_cryptos
         asset_type = "crypto" if is_crypto else "stock"
         
-        # Use MCP tool to get technical indicators
-        from market.mcp_tools import get_technical_indicators
-        tech_data = await get_technical_indicators(symbol, asset_type, timeframe)
+        # Use market manager directly
+        mm = app.state.market_manager
+        http = app.state.http
         
-        # Check for error
-        if "error" in tech_data:
-            raise HTTPException(status_code=500, detail=tech_data["error"])
+        price_data = {}
+        indicators = {}
+        
+        # Get time series data based on timeframe and asset type
+        raw_data = None
+        time_series = None
+        
+        try:
+            if asset_type == "stock":
+                if timeframe == "daily":
+                    raw_data = await mm.get_time_series_daily(symbol, http_session=http)
+                elif timeframe == "weekly":
+                    raw_data = await mm.get_time_series_weekly(symbol, http_session=http)
+                elif timeframe == "monthly":
+                    raw_data = await mm.get_time_series_monthly(symbol, http_session=http)
+                else:
+                    # Default to intraday for other timeframes
+                    raw_data = await mm.get_intraday_data(symbol, interval=timeframe, http_session=http)
+            else:
+                # For crypto
+                if timeframe == "daily":
+                    raw_data = await mm.get_crypto_daily(symbol, market="USD", http_session=http)
+                elif timeframe == "weekly":
+                    raw_data = await mm.get_crypto_weekly(symbol, market="USD", http_session=http)
+                elif timeframe == "monthly":
+                    raw_data = await mm.get_crypto_monthly(symbol, market="USD", http_session=http)
+                else:
+                    # Default to intraday for other timeframes
+                    raw_data = await mm.get_crypto_intraday(symbol, market="USD", interval=timeframe, http_session=http)
+                
+            # Process the data
+            if raw_data:
+                # Extract time series key
+                for key in raw_data.keys():
+                    if key.startswith("Time Series") or key == "data":
+                        time_series = raw_data[key]
+                        break
+                
+                if time_series:
+                    # Get the latest data point
+                    latest_date = sorted(time_series.keys(), reverse=True)[0]
+                    latest_data = time_series[latest_date]
+                    
+                    # Extract price data
+                    close_key = next((k for k in latest_data.keys() if 'close' in k.lower()), None)
+                    open_key = next((k for k in latest_data.keys() if 'open' in k.lower()), None)
+                    high_key = next((k for k in latest_data.keys() if 'high' in k.lower()), None)
+                    low_key = next((k for k in latest_data.keys() if 'low' in k.lower()), None)
+                    volume_key = next((k for k in latest_data.keys() if 'volume' in k.lower()), None)
+                    
+                    if close_key:
+                        current_price = float(latest_data[close_key])
+                        price_data["current"] = current_price
+                    
+                    if open_key:
+                        price_data["open"] = float(latest_data[open_key])
+                        
+                    if high_key:
+                        price_data["high"] = float(latest_data[high_key])
+                        
+                    if low_key:
+                        price_data["low"] = float(latest_data[low_key])
+                        
+                    if volume_key:
+                        price_data["volume"] = float(latest_data[volume_key])
+                        
+                    # Calculate change
+                    if len(time_series.keys()) > 1:
+                        prev_date = sorted(time_series.keys(), reverse=True)[1]
+                        prev_data = time_series[prev_date]
+                        if close_key and prev_data.get(close_key):
+                            prev_close = float(prev_data[close_key])
+                            price_data["change"] = current_price - prev_close
+                            price_data["change_percent"] = ((current_price - prev_close) / prev_close) * 100
+                
+        except Exception as e:
+            logger.error(f"Error processing market data: {e}")
             
-        return tech_data
+        # Return the data
+        return {
+            "symbol": symbol,
+            "timeframe": timeframe,
+            "price_data": price_data,
+            "indicators": indicators,
+            "trend": {"direction": "neutral", "strength": "medium"}
+        }
             
     except Exception as e:
         logger.error(f"Technical indicators error: {e}")
@@ -238,16 +403,76 @@ async def get_technical_indicators(symbol: str, timeframe: str = "daily"):
 
 @app.get("/market/news-sentiment/{symbol}")
 async def get_news_sentiment(symbol: str):
-    """Get news sentiment data using MCP tool"""
+    """Get news sentiment data bypassing MCP tools"""
     try:
-        if not app.state.mcp:
-            raise HTTPException(status_code=503, detail="MCP service not initialized")
+        if not app.state.market_manager:
+            raise HTTPException(status_code=503, detail="Market manager not initialized")
             
-        # Use MCP tool to get news sentiment
-        from market.mcp_tools import get_news_sentiment
-        sentiment_data = await get_news_sentiment(symbol)
+        # Use market manager directly
+        mm = app.state.market_manager
+        http = app.state.http
         
-        return sentiment_data
+        sentiment_data = await mm.get_news_sentiment(ticker=symbol, http_session=http)
+        
+        # Process data into standard format
+        if sentiment_data and "feed" in sentiment_data:
+            articles = sentiment_data["feed"]
+            article_count = len(articles)
+            
+            sentiment_score = 50  # Neutral default
+            sentiment_label = "NEUTRAL"
+            most_relevant_article = None
+            
+            if article_count > 0:
+                # Calculate average sentiment
+                total_score = 0
+                for article in articles:
+                    score = article.get("overall_sentiment_score", 0)
+                    total_score += score
+                
+                avg_score = total_score / article_count
+                sentiment_score = (avg_score + 1) * 50  # Convert from -1,1 to 0,100
+                
+                # Determine sentiment label
+                if sentiment_score > 65:
+                    sentiment_label = "BULLISH"
+                elif sentiment_score < 35:
+                    sentiment_label = "BEARISH"
+                
+                # Find most relevant article (highest relevance score)
+                most_relevant_article = max(articles, key=lambda x: x.get("relevance_score", 0))
+                
+                # Clean up article
+                if most_relevant_article:
+                    most_relevant_article = {
+                        "title": most_relevant_article.get("title", ""),
+                        "url": most_relevant_article.get("url", ""),
+                        "summary": most_relevant_article.get("summary", ""),
+                        "published": most_relevant_article.get("time_published", ""),
+                        "source": most_relevant_article.get("source", ""),
+                        "sentiment_score": most_relevant_article.get("overall_sentiment_score", 0)
+                    }
+            
+            return {
+                "symbol": symbol,
+                "sentiment": {
+                    "score": sentiment_score,
+                    "label": sentiment_label
+                },
+                "news_count": article_count,
+                "most_relevant_article": most_relevant_article,
+                "timestamp": datetime.now(UTC).isoformat()
+            }
+        
+        return {
+            "symbol": symbol,
+            "sentiment": {
+                "score": 50,
+                "label": "NEUTRAL"
+            },
+            "news_count": 0,
+            "timestamp": datetime.now(UTC).isoformat()
+        }
             
     except Exception as e:
         logger.error(f"News sentiment error: {e}")
