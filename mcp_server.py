@@ -37,8 +37,8 @@ agent = None  # Will be set from main.py
 
 # Tools are registered by the agent at initialization time
 
-# Export only the mcp instance for use in main.py
-__all__ = ["mcp"]
+# Export mcp instance and CUSTOM_SCHEME for use in other modules
+__all__ = ["mcp", "CUSTOM_SCHEME"]
 
 # Skip error handler registration for now as it might be causing issues
 # We'll add proper error handling directly in the route handlers

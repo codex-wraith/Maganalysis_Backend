@@ -1,13 +1,14 @@
 import logging
 from typing import Dict, List, Any, Optional
 from datetime import datetime, UTC
+from mcp_server import CUSTOM_SCHEME
 
 logger = logging.getLogger(__name__)
 
 def register_memory_resources(mcp, agent):
     """Register memory resources with the MCP server"""
     
-    @mcp.resource("/memory/stats")
+    @mcp.resource(f"{CUSTOM_SCHEME}:///memory/stats")
     async def get_memory_stats():
         """Get memory usage statistics"""
         try:
@@ -17,7 +18,7 @@ def register_memory_resources(mcp, agent):
             logger.error(f"Error getting memory stats: {e}", exc_info=True)
             return {"error": str(e)}
     
-    @mcp.resource("/memory/user/{user_id}")
+    @mcp.resource(f"{CUSTOM_SCHEME}:///memory/user/{{user_id}}")
     async def get_user_memory(user_id: str):
         """Get memory information for a specific user"""
         try:
