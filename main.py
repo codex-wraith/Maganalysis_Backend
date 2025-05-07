@@ -191,13 +191,12 @@ async def health_check():
 
 @app.get("/market/overview")
 async def get_market_overview():
-    """Get market overview data directly without using MCP resource"""
+    """Get market overview data including sentiment, top stocks, and indices"""
     try:
         if not app.state.market_manager:
             raise HTTPException(status_code=503, detail="Market manager not initialized")
             
         # Get crypto and general market sentiment data
-        http = app.state.http
         mm = app.state.market_manager
         
         crypto_data = []
@@ -213,6 +212,8 @@ async def get_market_overview():
         btc_mood = None
         btc_score = None
         article_count = 0
+        top_stocks_data = {"gainers": [], "most_actively_traded": []}
+        indices_data = []
             
         # Get overall market sentiment
         try:
@@ -277,6 +278,23 @@ async def get_market_overview():
         except Exception as e:
             logger.error(f"Error fetching crypto sentiment: {e}")
         
+        # Get top stocks data (gainers, losers, most active)
+        try:
+            top_stocks_data = await mm.get_top_gainers_losers()
+            if not top_stocks_data:
+                top_stocks_data = {"gainers": [], "most_actively_traded": []}
+        except Exception as e:
+            logger.error(f"Error fetching top stocks: {e}")
+            top_stocks_data = {"gainers": [], "most_actively_traded": []}
+            
+        # Get major stock indices (S&P 500, DOW, NASDAQ, etc.)
+        try:
+            index_quotes_result = await mm.get_index_quotes()
+            indices_data = index_quotes_result.get("indices", [])
+        except Exception as e:
+            logger.error(f"Error fetching index quotes: {e}")
+            indices_data = []
+        
         # Return combined data
         return {
             "market_status": {
@@ -292,6 +310,8 @@ async def get_market_overview():
                 "source": "BTC" 
             },
             "cryptos": crypto_data,
+            "top_stocks": top_stocks_data,  # Add top stocks data
+            "indices": indices_data,        # Add indices data
             "timestamp": datetime.now(UTC).isoformat()
         }
         
