@@ -205,18 +205,21 @@ async def get_crypto_info(symbol: str):
 async def ping():
     return "pong"
 
-# Use decorators with no leading slashes
-@mcp.resource("/market_overview")
+# Define a custom scheme for MCP resources
+CUSTOM_SCHEME = "maganalysis"
+
+# Use decorators with custom scheme
+@mcp.resource(f"{CUSTOM_SCHEME}:///market_overview")
 async def get_market_overview_wrapper():
     """Decorator-safe wrapper for get_market_overview"""
     return await get_market_overview()
 
-@mcp.resource("/stock/{symbol}")
+@mcp.resource(f"{CUSTOM_SCHEME}:///stock/{{symbol}}")
 async def get_stock_info_wrapper(symbol: str):
     """Decorator-safe wrapper for get_stock_info"""
     return await get_stock_info(symbol)
 
-@mcp.resource("/crypto/{symbol}")
+@mcp.resource(f"{CUSTOM_SCHEME}:///crypto/{{symbol}}")
 async def get_crypto_info_wrapper(symbol: str):
     """Decorator-safe wrapper for get_crypto_info"""
     return await get_crypto_info(symbol)
