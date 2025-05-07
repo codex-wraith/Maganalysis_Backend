@@ -206,12 +206,19 @@ async def get_market_overview():
         article_count = 0
         market_article_count = 0
         
+        # Initialize variables to None to indicate no data available
+        market_mood = None
+        sentiment_score = None
+        market_article_count = 0
+        btc_mood = None
+        btc_score = None
+        article_count = 0
+            
         # Get overall market sentiment
         try:
             market_sentiment = await mm.get_news_sentiment(
                 topics="financial_markets", 
-                limit=50,
-                http_session=http
+                limit=50
             )
             
             if market_sentiment and "feed" in market_sentiment:
@@ -238,9 +245,7 @@ async def get_market_overview():
         
         # Get Bitcoin sentiment
         try:
-            btc_sentiment = await mm.get_news_sentiment(ticker="BTC", http_session=http)
-            btc_mood = None
-            btc_score = None
+            btc_sentiment = await mm.get_news_sentiment(ticker="BTC")
             
             if btc_sentiment and "feed" in btc_sentiment:
                 articles = btc_sentiment["feed"]
@@ -322,10 +327,10 @@ async def get_historical_data(symbol: str, timeframe: str = "1d"):
             
         try:
             if asset_type == "stock":
-                data = await mm.get_time_series_daily(symbol, http_session=http)
+                data = await mm.get_time_series_daily(symbol)
                 return data
             else:
-                data = await mm.get_crypto_daily(symbol, "USD", http_session=http)
+                data = await mm.get_crypto_daily(symbol, "USD")
                 return data
         except Exception as e:
             logger.error(f"Error processing market data: {e}")
@@ -361,25 +366,25 @@ async def get_technical_indicators(symbol: str, timeframe: str = "daily"):
         try:
             if asset_type == "stock":
                 if timeframe == "daily":
-                    raw_data = await mm.get_time_series_daily(symbol, http_session=http)
+                    raw_data = await mm.get_time_series_daily(symbol)
                 elif timeframe == "weekly":
-                    raw_data = await mm.get_time_series_weekly(symbol, http_session=http)
+                    raw_data = await mm.get_time_series_weekly(symbol)
                 elif timeframe == "monthly":
-                    raw_data = await mm.get_time_series_monthly(symbol, http_session=http)
+                    raw_data = await mm.get_time_series_monthly(symbol)
                 else:
                     # Default to intraday for other timeframes
-                    raw_data = await mm.get_intraday_data(symbol, interval=timeframe, http_session=http)
+                    raw_data = await mm.get_intraday_data(symbol, interval=timeframe)
             else:
                 # For crypto
                 if timeframe == "daily":
-                    raw_data = await mm.get_crypto_daily(symbol, market="USD", http_session=http)
+                    raw_data = await mm.get_crypto_daily(symbol, market="USD")
                 elif timeframe == "weekly":
-                    raw_data = await mm.get_crypto_weekly(symbol, market="USD", http_session=http)
+                    raw_data = await mm.get_crypto_weekly(symbol, market="USD")
                 elif timeframe == "monthly":
-                    raw_data = await mm.get_crypto_monthly(symbol, market="USD", http_session=http)
+                    raw_data = await mm.get_crypto_monthly(symbol, market="USD")
                 else:
                     # Default to intraday for other timeframes
-                    raw_data = await mm.get_crypto_intraday(symbol, market="USD", interval=timeframe, http_session=http)
+                    raw_data = await mm.get_crypto_intraday(symbol, market="USD", interval=timeframe)
                 
             # Process the data
             if raw_data:
@@ -453,7 +458,7 @@ async def get_news_sentiment(symbol: str):
         mm = app.state.market_manager
         http = app.state.http
         
-        sentiment_data = await mm.get_news_sentiment(ticker=symbol, http_session=http)
+        sentiment_data = await mm.get_news_sentiment(ticker=symbol)
         
         # Process data into standard format
         if sentiment_data and "feed" in sentiment_data:
