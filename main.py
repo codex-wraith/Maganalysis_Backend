@@ -16,7 +16,8 @@ from hypercorn.config import Config
 from hypercorn.asyncio import serve
 from aisettings import AISettings
 from market.market_manager import MarketManager
-from market.indicators import TechnicalIndicators
+from market.indicators import TechnicalIndicators, TimeframeParameters
+from market.data_processor import MarketDataProcessor
 from mcp_server import mcp
 
 # Setup logging
@@ -374,7 +375,6 @@ async def get_technical_indicators(symbol: str, timeframe: str = "daily"):
         
         # Use market manager directly
         mm = app.state.market_manager
-        http = app.state.http
         
         price_data = {}
         indicators = {}
@@ -409,8 +409,10 @@ async def get_technical_indicators(symbol: str, timeframe: str = "daily"):
             # Process the data
             if raw_data:
                 # Extract time series key
+                time_series_key = None
                 for key in raw_data.keys():
                     if key.startswith("Time Series") or key == "data":
+                        time_series_key = key
                         time_series = raw_data[key]
                         break
                 
@@ -450,6 +452,109 @@ async def get_technical_indicators(symbol: str, timeframe: str = "daily"):
                             prev_close = float(prev_data[close_key])
                             price_data["change"] = current_price - prev_close
                             price_data["change_percent"] = ((current_price - prev_close) / prev_close) * 100
+                    
+                    # Process the time series into a DataFrame and calculate indicators
+                    df = MarketDataProcessor.process_time_series_data(raw_data, time_series_key, asset_type)
+                    if df is not None and not df.empty:
+                        # Get timeframe-specific parameters
+                        params = TimeframeParameters.get_parameters(timeframe)
+                        
+                        # Calculate RSI
+                        rsi_value = TechnicalIndicators.calculate_rsi(df, period=params["rsi_period"])
+                        if rsi_value is not None:
+                            indicators["rsi"] = {
+                                "value": rsi_value,
+                                "signal": "oversold" if rsi_value < 30 else "overbought" if rsi_value > 70 else "neutral"
+                            }
+                        
+                        # Calculate MACD
+                        macd_value, signal_value = TechnicalIndicators.calculate_macd(df)
+                        if macd_value is not None and signal_value is not None:
+                            indicators["macd"] = {
+                                "value": macd_value,
+                                "signal_line": signal_value,
+                                "signal": "bullish" if macd_value > signal_value else "bearish"
+                            }
+                        
+                        # Calculate Stochastic
+                        k_value, d_value = TechnicalIndicators.calculate_stochastic(df, k_period=params["stoch_k_period"], d_period=params["stoch_d_period"])
+                        if k_value is not None and d_value is not None:
+                            indicators["stochastic"] = {
+                                "k": k_value,  # %K
+                                "d": d_value,  # %D
+                                "signal": "oversold" if k_value < 20 else "overbought" if k_value > 80 else "neutral"
+                            }
+                        
+                        # Calculate Bollinger Bands
+                        bbands = TechnicalIndicators.calculate_bbands(df, period=params["bbands_period"])
+                        if bbands and all(v is not None for v in bbands.values()):
+                            indicators["bbands"] = bbands
+                        
+                        # Calculate SMA & EMA
+                        sma_value = TechnicalIndicators.calculate_sma(df, period=params["sma_period"])
+                        if sma_value is not None:
+                            indicators["sma"] = {
+                                "value": sma_value,
+                                "signal": "above" if price_data.get("current", 0) > sma_value else "below"
+                            }
+                        
+                        ema_value = TechnicalIndicators.calculate_ema(df, period=params["ema_period"])
+                        if ema_value is not None:
+                            indicators["ema"] = {
+                                "value": ema_value,
+                                "signal": "above" if price_data.get("current", 0) > ema_value else "below"
+                            }
+                        
+                        # Calculate ATR & ADX
+                        atr_value = TechnicalIndicators.calculate_atr(df, period=params["atr_period"])
+                        if atr_value is not None:
+                            indicators["atr"] = {"value": atr_value}
+                        
+                        adx_value = TechnicalIndicators.calculate_adx(df, period=params["adx_period"])
+                        if adx_value is not None:
+                            indicators["adx"] = {
+                                "value": adx_value,
+                                "signal": "weak" if adx_value < 20 else "strong" if adx_value > 25 else "moderate"
+                            }
+                        
+                        # Determine trend based on indicators
+                        trend = {"direction": "neutral", "strength": "medium"}
+                        
+                        # Determine trend direction from multiple indicators
+                        bullish_signals = 0
+                        bearish_signals = 0
+                        
+                        # RSI
+                        if "rsi" in indicators:
+                            rsi = indicators["rsi"]["value"]
+                            if rsi > 60:
+                                bullish_signals += 1
+                            elif rsi < 40:
+                                bearish_signals += 1
+                        
+                        # MACD
+                        if "macd" in indicators:
+                            if indicators["macd"]["signal"] == "bullish":
+                                bullish_signals += 1
+                            else:
+                                bearish_signals += 1
+                        
+                        # Moving averages
+                        if "sma" in indicators and "ema" in indicators:
+                            if indicators["sma"]["signal"] == "above" and indicators["ema"]["signal"] == "above":
+                                bullish_signals += 1
+                            elif indicators["sma"]["signal"] == "below" and indicators["ema"]["signal"] == "below":
+                                bearish_signals += 1
+                        
+                        # Determine overall trend
+                        if bullish_signals > bearish_signals + 1:
+                            trend["direction"] = "bullish"
+                        elif bearish_signals > bullish_signals + 1:
+                            trend["direction"] = "bearish"
+                        
+                        # Determine strength (using ADX if available)
+                        if "adx" in indicators:
+                            trend["strength"] = indicators["adx"]["signal"]
                 
         except Exception as e:
             logger.error(f"Error processing market data: {e}")
@@ -460,9 +565,8 @@ async def get_technical_indicators(symbol: str, timeframe: str = "daily"):
             "timeframe": timeframe,
             "price_data": price_data,
             "indicators": indicators,
-            "trend": {"direction": "neutral", "strength": "medium"}
+            "trend": trend
         }
-            
     except Exception as e:
         logger.error(f"Technical indicators error: {e}")
         raise HTTPException(status_code=500, detail="Error retrieving technical indicators")
