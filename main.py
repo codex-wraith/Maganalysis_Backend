@@ -294,6 +294,47 @@ async def get_market_overview():
         logger.error(f"Market overview error: {e}")
         raise HTTPException(status_code=500, detail="Error retrieving market data")
 
+@app.get("/market/data/{symbol}")
+async def get_historical_data(symbol: str, timeframe: str = "1d"):
+    """Get historical data for a given symbol and timeframe"""
+    try:
+        if not app.state.market_manager:
+            raise HTTPException(status_code=503, detail="Market manager not initialized")
+            
+        mm = app.state.market_manager
+        http = app.state.http
+        
+        # Map frontend timeframe to backend interval
+        interval_map = {
+            "1d": "daily",
+            "1h": "60min",
+            "15m": "15min",
+            "5m": "5min",
+            "1m": "1min"
+        }
+        
+        interval = interval_map.get(timeframe, "daily")
+        
+        # Determine if this is a stock or crypto
+        asset_type = "stock"
+        if symbol.upper() in ["BTC", "ETH", "XRP", "LTC", "ADA", "DOGE", "USDT", "BNB"]:
+            asset_type = "crypto"
+            
+        try:
+            if asset_type == "stock":
+                data = await mm.get_time_series_daily(symbol, http_session=http)
+                return data
+            else:
+                data = await mm.get_crypto_daily(symbol, "USD", http_session=http)
+                return data
+        except Exception as e:
+            logger.error(f"Error processing market data: {e}")
+            raise HTTPException(status_code=500, detail="Error processing market data")
+            
+    except Exception as e:
+        logger.error(f"Error getting historical data: {e}")
+        raise HTTPException(status_code=500, detail="Error retrieving market data")
+
 @app.get("/market/indicators/{symbol}")
 async def get_technical_indicators(symbol: str, timeframe: str = "daily"):
     """Get technical indicators bypassing MCP tools"""

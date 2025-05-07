@@ -218,7 +218,7 @@ class MarketManager:
         data = await self._fetch_alpha_data(params)
         return data
 
-    async def get_time_series_daily(self, symbol: str, outputsize: str = "full", datatype: str = "json") -> Dict:
+    async def get_time_series_daily(self, symbol: str, outputsize: str = "full", datatype: str = "json", http_session: aiohttp.ClientSession = None) -> Dict:
         """
         Retrieve daily time series data for a given stock symbol using the TIME_SERIES_DAILY endpoint.
         
@@ -303,7 +303,8 @@ class MarketManager:
         self,
         symbol: str,
         market: str,
-        datatype: str = "json"
+        datatype: str = "json",
+        http_session: aiohttp.ClientSession = None
     ) -> Dict:
         """
         Retrieve daily time series data for a specified cryptocurrency using the
@@ -403,7 +404,7 @@ class MarketManager:
         
         return {"indices": indices}
         
-    async def get_news_sentiment(self, ticker: str = None, topics: str = None, time_from: str = None, limit: int = 100) -> Dict:
+    async def get_news_sentiment(self, ticker: str = None, topics: str = None, time_from: str = None, limit: int = 100, http_session: aiohttp.ClientSession = None) -> Dict:
         """
         Retrieve news sentiment data for a specified ticker and/or topics.
         
