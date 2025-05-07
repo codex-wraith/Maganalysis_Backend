@@ -457,18 +457,82 @@ class CipherAgent:
             # Create MCP context
             mcp_context = Context()
             
-            # Add market analysis system prompt
-            analysis_prompt = await mcp.prompts.get('market_analysis_template')
+            # Get market analysis template from PromptManager
+            market_analysis_template = self.prompt_manager.get_template_section('market_analysis_template')
+            if market_analysis_template:
+                analysis_prompt = market_analysis_template.get("header", "") + \
+                                 market_analysis_template.get("sentiment_section", "") + \
+                                 market_analysis_template.get("recommendation_section", "")
+            else:
+                # Fallback to a basic template if not found
+                analysis_prompt = "Analyze this asset based on technical indicators, price levels, and market sentiment."
+                
             mcp_context.add_system_message(analysis_prompt)
             
-            # Add multi-timeframe analysis prompt
-            mtf_prompt = await mcp.prompts.get("mtf_analysis")
-            mcp_context.add_system_message(mtf_prompt)
+            # Generate dynamic multi-timeframe analysis instead of using a static template
+            # First, get data across multiple timeframes to build a data-driven MTF context
+            current_price = None
+            latest_atr = None
+            mtf_context = ""
+            
+            # Get multi-timeframe support/resistance levels
+            try:
+                # First get data for the primary timeframe to extract current price and ATR
+                primary_tech_data = await get_technical_indicators(symbol, asset_type, interval)
+                if primary_tech_data and "price_data" in primary_tech_data:
+                    current_price = primary_tech_data.get("price_data", {}).get("current")
+                    latest_atr = primary_tech_data.get("indicators", {}).get("atr", {}).get("value")
+                
+                # Now get multi-timeframe analysis
+                if current_price:
+                    # Get MTF analysis which includes consolidated support/resistance zones
+                    mtf_analysis = await analyze_multi_timeframe(symbol, asset_type, interval)
+                    price_levels = await get_price_levels(symbol, asset_type, interval)
+                    
+                    # Generate a text summary of MTF analysis that reflects the data
+                    mtf_context = "MULTI-TIMEFRAME ANALYSIS:\n\n"
+                    
+                    # Add signal and reasoning from MTF analysis
+                    mtf_context += f"Overall Signal: {mtf_analysis.get('signal', 'NEUTRAL')}\n"
+                    mtf_context += f"Reasoning: {mtf_analysis.get('reasoning', 'Insufficient data')}\n\n"
+                    
+                    # Add key support levels
+                    mtf_context += "Key Support Levels (across timeframes):\n"
+                    support_zones = price_levels.get("consolidated_support", [])
+                    for zone in support_zones[:3]:  # Top 3 support zones
+                        if "price" in zone and zone["price"] < current_price:
+                            timeframes = "/".join(zone.get("timeframes", []))
+                            strength = zone.get('strength', 0)
+                            mtf_context += f"- ${zone['price']} (strength: {strength:.1f}, timeframes: {timeframes})\n"
+                    
+                    # Add key resistance levels  
+                    mtf_context += "\nKey Resistance Levels (across timeframes):\n"
+                    resistance_zones = price_levels.get("consolidated_resistance", [])
+                    for zone in resistance_zones[:3]:  # Top 3 resistance zones
+                        if "price" in zone and zone["price"] > current_price:
+                            timeframes = "/".join(zone.get("timeframes", []))
+                            strength = zone.get('strength', 0)
+                            mtf_context += f"- ${zone['price']} (strength: {strength:.1f}, timeframes: {timeframes})\n"
+            except Exception as e:
+                logger.error(f"Error generating MTF context: {e}")
+                # Fallback to generic MTF guidelines
+                mtf_context = """
+                Multi-timeframe Analysis Guidelines:
+                - Primary timeframe: {interval}
+                - When analyzing, consider both higher and lower timeframes
+                - Higher timeframes show overall trend direction
+                - Lower timeframes reveal entry/exit opportunities
+                - Confluence of signals across timeframes indicates stronger support/resistance
+                """
+            
+            # Add the data-driven MTF context
+            mcp_context.add_system_message(mtf_context)
             
             # Get technical analysis data using MCP tools
             from market.mcp_tools import get_technical_indicators, get_news_sentiment
             from market.mcp_price_levels import get_price_levels
             from market.mcp_multi_timeframe import analyze_multi_timeframe
+            # These imports are now also used for generating the MTF context above
             
             tech_data = await get_technical_indicators(symbol, asset_type, interval)
             price_levels = await get_price_levels(symbol, asset_type, interval)
