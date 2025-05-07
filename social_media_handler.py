@@ -59,14 +59,15 @@ class SocialMediaHandler:
         """Start Telegram polling if a bot is configured"""
         if hasattr(self, '_telegram_application'):
             await self._telegram_application.initialize()
-            await self._telegram_application.start_polling()
+            await self._telegram_application.start()
             logger.info("Telegram polling started")
     
     async def stop_telegram(self):
         """Stop Telegram polling"""
         if hasattr(self, '_telegram_application'):
             await self._telegram_application.stop()
-            logger.info("Telegram polling stopped")
+            await self._telegram_application.shutdown()
+            logger.info("Telegram polling stopped and application shut down")
     
     async def handle_start_command(self, update, context):
         """Handle /start command in Telegram"""
