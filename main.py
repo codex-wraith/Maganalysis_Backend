@@ -623,6 +623,9 @@ async def get_news_sentiment(symbol: str):
                         "sentiment_score": most_relevant_article.get("overall_sentiment_score", 0)
                     }
             
+            # Extract the original feed (articles)
+            original_feed = sentiment_data.get("feed", [])
+            
             return {
                 "symbol": symbol,
                 "sentiment": {
@@ -631,6 +634,7 @@ async def get_news_sentiment(symbol: str):
                 },
                 "news_count": article_count,
                 "most_relevant_article": most_relevant_article,
+                "feed": original_feed, # Added feed array here
                 "timestamp": datetime.now(UTC).isoformat()
             }
         
@@ -641,6 +645,7 @@ async def get_news_sentiment(symbol: str):
                 "label": "NEUTRAL"
             },
             "news_count": 0,
+            "feed": [], # Add empty feed array for consistency
             "timestamp": datetime.now(UTC).isoformat()
         }
             
