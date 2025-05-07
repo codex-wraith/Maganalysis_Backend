@@ -480,8 +480,8 @@ async def get_technical_indicators(symbol: str, timeframe: str = "daily"):
                         k_value, d_value = TechnicalIndicators.calculate_stochastic(df, k_period=params["stoch_k_period"], d_period=params["stoch_d_period"])
                         if k_value is not None and d_value is not None:
                             indicators["stochastic"] = {
-                                "k": k_value,  # %K
-                                "d": d_value,  # %D
+                                "value": k_value,  # %K - renamed to "value" to match frontend expectations
+                                "d_value": d_value,  # %D - renamed to "d_value" to match frontend expectations
                                 "signal": "oversold" if k_value < 20 else "overbought" if k_value > 80 else "neutral"
                             }
                         
