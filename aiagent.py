@@ -6,10 +6,9 @@ import re
 from datetime import datetime, UTC
 from typing import Dict, List, Any, Optional, Tuple, Union
 
-# Skip direct MCP imports to prevent circular dependencies
-# We'll either avoid using these or import them when needed
-# from mcp_server import mcp
-# from mcp.server.fastmcp import Context
+# Import MCP components
+from mcp_server import mcp
+from mcp.server.fastmcp import Context
 from aisettings import AISettings
 from memory.message_memory import MessageMemoryManager
 from prompts.prompt_manager import PromptManager
@@ -359,7 +358,6 @@ class CipherAgent:
         
         try:
             # Use MCP tool to get news sentiment
-            from mcp_server import mcp
             news_data = await mcp.tools.get_news_sentiment(symbol)
             
             # Process sentiment data
@@ -825,7 +823,6 @@ class CipherAgent:
         """
         try:
             # Use MCP tool to get real-time price
-            from mcp_server import mcp
             from market.mcp_tools import get_technical_indicators
             
             # Get technical data which includes current price
@@ -926,7 +923,6 @@ class CipherAgent:
         """
         try:
             # Use MCP tools to get data
-            from mcp_server import mcp
             from market.mcp_tools import get_raw_market_data
             
             # Get raw market data
@@ -973,7 +969,6 @@ class CipherAgent:
                     return cached_data
                     
             # Use MCP tool to analyze multi-timeframe levels
-            from mcp_server import mcp
             from market.mcp_multi_timeframe import analyze_multi_timeframe
             from market.mcp_price_levels import get_price_levels
             
@@ -1207,7 +1202,6 @@ class CipherAgent:
         """
         try:
             # Use MCP tool to search for asset information
-            from mcp_server import mcp
             
             # Check if search is for a specific symbol
             potential_symbol = None
@@ -1292,7 +1286,6 @@ class CipherAgent:
         """
         try:
             # Use MCP tools to get comprehensive data
-            from mcp_server import mcp
             
             # Get technical indicators
             tech_data = await mcp.tools.get_technical_indicators(symbol, asset_type, timeframe)
@@ -1421,7 +1414,6 @@ class CipherAgent:
         """
         try:
             # Use MCP tools to get comprehensive data
-            from mcp_server import mcp
             
             # Get trend following strategy
             trend_strategy = await self.process_trend_following_strategy(symbol, asset_type, timeframe)
