@@ -401,19 +401,22 @@ def register_market_tools(mcp, app, market_manager, http_session, agent):
             logger.error(f"Error in search_market_information: {str(e)}")
             raise ToolError(f"Search failed: {str(e)}")
 
-async def add_market_analysis_to_context(agent, context, symbol, asset_type, timeframe):
+async def add_market_analysis_to_context(agent, messages_list=None, symbol=None, asset_type=None, timeframe=None, context=None):
     """
-    Add market analysis data to an MCP context.
+    Add market analysis data to either a message list or MCP context.
     
     Args:
         agent: The CipherAgent instance
-        context: The MCP context to modify
+        messages_list: Optional list of message dictionaries to append to (new API)
         symbol: The asset symbol to analyze
         asset_type: The asset type (stock or crypto)
         timeframe: The timeframe to analyze
+        context: Optional legacy MCP context object (old API)
         
     Returns:
-        None - modifies the context in place
+        If messages_list is provided: The market analysis message dictionary
+        If context is provided: None (modifies the context in place)
+        If neither is provided: The market analysis string
     """
     try:
         # Get the MCP instance
@@ -458,8 +461,39 @@ async def add_market_analysis_to_context(agent, context, symbol, asset_type, tim
             Summary: {article.get('summary', 'No summary available')}
             """
         
-        context.add_system_message(market_context)
+        # Handle different API formats
+        if context is not None:
+            try:
+                # Legacy API - attempt to add to context
+                context.add_system_message(market_context)
+                return None
+            except Exception as e:
+                logger.error(f"Error adding to context object: {e}")
+                # Fall through to return the string
+        
+        if messages_list is not None and isinstance(messages_list, list):
+            # New API - add to message list
+            message_dict = {"role": "system", "content": market_context}
+            messages_list.append(message_dict)
+            return message_dict
+        
+        # If neither context nor messages_list is provided, return the string
+        return market_context
         
     except Exception as e:
+        error_msg = f"Note: Could not retrieve complete market analysis for {symbol}. Error: {str(e)}"
         logger.error(f"Error adding market analysis to context: {e}")
-        context.add_system_message(f"Note: Could not retrieve complete market analysis for {symbol}. Error: {str(e)}")
+        
+        # Handle the error based on what was provided
+        if context is not None:
+            try:
+                context.add_system_message(error_msg)
+            except:
+                pass
+        
+        if messages_list is not None and isinstance(messages_list, list):
+            error_dict = {"role": "system", "content": error_msg}
+            messages_list.append(error_dict)
+            return error_dict
+            
+        return error_msg

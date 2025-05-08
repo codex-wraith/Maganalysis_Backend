@@ -8,7 +8,7 @@ from typing import Dict, List, Any, Optional, Tuple, Union
 
 # Import MCP components
 from mcp_server import mcp
-from mcp.server.fastmcp import Context
+# Removed import of Context which is no longer needed
 from aisettings import AISettings
 from memory.message_memory import MessageMemoryManager
 from prompts.prompt_manager import PromptManager
@@ -210,19 +210,22 @@ class CipherAgent:
                 await self.message_memory.add_response(platform, user_id, restricted_message)
                 return restricted_message
             
-            # Create MCP context
-            mcp_context = Context()
+            # Create a list of messages for the LLM
+            messages_for_llm = []
             
             # Add system prompts
-            mcp_context.add_system_message(self.base_system_prompt)
+            messages_for_llm.append({"role": "system", "content": self.base_system_prompt})
             
             # Add platform-specific context
             platform_key = platform or "web"
-            platform_context = await mcp.prompts.get(platform_key)
-            if platform_context:
-                mcp_context.add_system_message(platform_context)
+            try:
+                platform_context = await mcp.prompts.get(platform_key)
+                if platform_context:
+                    messages_for_llm.append({"role": "system", "content": platform_context})
+            except Exception as e:
+                logger.warning(f"Could not get platform context for {platform_key}: {e}")
             
-            # Get conversation history and add to context
+            # Get conversation history
             conversation_history = await self.message_memory.get_conversation_history(
                 platform=platform or "web", 
                 user_id=user_id or "anonymous",
@@ -244,20 +247,24 @@ class CipherAgent:
                         
                     # Add session break if it's been more than 3 hours
                     if last_dt and (datetime.now(UTC) - last_dt).total_seconds() > 10800:
-                        session_break = await mcp.prompts.get("conversation_break")
-                        mcp_context.add_system_message(session_break)
+                        try:
+                            session_break = await mcp.prompts.get("conversation_break")
+                            if session_break:
+                                messages_for_llm.append({"role": "system", "content": session_break})
+                        except Exception as e:
+                            logger.warning(f"Could not get conversation break prompt: {e}")
             
             # Get formatted conversation history
             formatted_history = await self._format_conversation_history(conversation_history)
             if formatted_history:
-                mcp_context.add_system_message(formatted_history)
+                messages_for_llm.append({"role": "system", "content": formatted_history})
             
-            # Add conversation history to context
+            # Add conversation history
             for msg in conversation_history:
-                if msg.get('is_response'):
-                    mcp_context.add_assistant_message(msg.get('text', ''))
-                else:
-                    mcp_context.add_user_message(msg.get('text', ''))
+                role = "assistant" if msg.get('is_response') else "user"
+                content = msg.get('text', '')
+                if content:  # Skip empty messages
+                    messages_for_llm.append({"role": role, "content": content})
             
             # Detect analysis requests
             is_analysis_request = self._is_analysis_request(text)
@@ -270,22 +277,26 @@ class CipherAgent:
                     # Detect asset type
                     asset_type = self._determine_asset_type(symbol)
                     
-                    # Enhance context with market data
+                    # Enhance context with market data using the updated function
                     try:
-                        # Use market data tools to get analysis
+                        # Use the updated add_market_analysis_to_context function with the new messages_list argument
                         from market.mcp_tools import add_market_analysis_to_context
+                        
+                        # This will add the market analysis directly to the messages_for_llm list
                         await add_market_analysis_to_context(
-                            self, mcp_context, symbol, asset_type, timeframe or "daily"
+                            self, 
+                            messages_list=messages_for_llm, 
+                            symbol=symbol, 
+                            asset_type=asset_type, 
+                            timeframe=timeframe or "daily"
                         )
                     except Exception as e:
                         logger.error(f"Error adding market analysis context: {e}", exc_info=True)
                         # Add error context to inform model
-                        mcp_context.add_system_message(
-                            f"Note: Market data for {symbol} could not be retrieved. Error: {str(e)}"
-                        )
+                        messages_for_llm.append({"role": "system", "content": f"Note: Market data for {symbol} could not be retrieved. Error: {str(e)}"})
             
             # Add the current message
-            mcp_context.add_user_message(text)
+            messages_for_llm.append({"role": "user", "content": text})
             
             # Determine model to use
             model_to_use = self.settings.SOCIAL_MODEL
@@ -297,9 +308,9 @@ class CipherAgent:
             # Set max tokens with context override if provided
             max_tokens = context.get("max_tokens", self.settings.MAX_TOKENS)
             
-            # Generate response using MCP
+            # Generate response using MCP with the new API format
             response = await mcp.client.generate(
-                context=mcp_context,
+                messages=messages_for_llm,  # Pass messages directly instead of context
                 model=model_to_use,
                 max_tokens=max_tokens,
                 temperature=self.settings.TEMPERATURE
@@ -454,8 +465,8 @@ class CipherAgent:
             A string containing the analysis
         """
         try:
-            # Create MCP context
-            mcp_context = Context()
+            # Create a list of messages for the LLM
+            messages_for_llm = []
             
             # Get market analysis template from PromptManager
             market_analysis_template = self.prompt_manager.get_template_section('market_analysis_template')
@@ -467,7 +478,12 @@ class CipherAgent:
                 # Fallback to a basic template if not found
                 analysis_prompt = "Analyze this asset based on technical indicators, price levels, and market sentiment."
                 
-            mcp_context.add_system_message(analysis_prompt)
+            messages_for_llm.append({"role": "system", "content": analysis_prompt})
+            
+            # Import tools needed for analysis
+            from market.mcp_tools import get_technical_indicators, get_news_sentiment
+            from market.mcp_price_levels import get_price_levels
+            from market.mcp_multi_timeframe import analyze_multi_timeframe
             
             # Generate dynamic multi-timeframe analysis instead of using a static template
             # First, get data across multiple timeframes to build a data-driven MTF context
@@ -516,7 +532,7 @@ class CipherAgent:
             except Exception as e:
                 logger.error(f"Error generating MTF context: {e}")
                 # Fallback to generic MTF guidelines
-                mtf_context = """
+                mtf_context = f"""
                 Multi-timeframe Analysis Guidelines:
                 - Primary timeframe: {interval}
                 - When analyzing, consider both higher and lower timeframes
@@ -526,20 +542,16 @@ class CipherAgent:
                 """
             
             # Add the data-driven MTF context
-            mcp_context.add_system_message(mtf_context)
+            messages_for_llm.append({"role": "system", "content": mtf_context})
             
-            # Get technical analysis data using MCP tools
-            from market.mcp_tools import get_technical_indicators, get_news_sentiment
-            from market.mcp_price_levels import get_price_levels
-            from market.mcp_multi_timeframe import analyze_multi_timeframe
-            # These imports are now also used for generating the MTF context above
-            
+            # Gather technical analysis data
             tech_data = await get_technical_indicators(symbol, asset_type, interval)
             price_levels = await get_price_levels(symbol, asset_type, interval)
             sentiment = await get_news_sentiment(symbol)
             
-            # Get multi-timeframe analysis
-            mtf_analysis = await analyze_multi_timeframe(symbol, asset_type, interval)
+            # Get multi-timeframe analysis if not already fetched
+            if 'mtf_analysis' not in locals() or not mtf_analysis:
+                mtf_analysis = await analyze_multi_timeframe(symbol, asset_type, interval)
             
             # Add market data to context
             analysis_context = f"""
@@ -548,14 +560,16 @@ class CipherAgent:
             Current Price: ${tech_data.get('price_data', {}).get('current', 'N/A')}
             
             Technical Indicators:
-            {json.dumps(tech_data, indent=2)}
+            {json.dumps(tech_data.get('indicators', {}), indent=2)}
             
             Support/Resistance Levels:
             Support: {json.dumps(price_levels.get('formatted_support', []))} below current price
             Resistance: {json.dumps(price_levels.get('formatted_resistance', []))} above current price
             
             News Sentiment:
-            {json.dumps(sentiment, indent=2)}
+            Score: {sentiment.get('sentiment', {}).get('score', 'N/A')} ({sentiment.get('sentiment', {}).get('label', 'NEUTRAL')})
+            News Count: {sentiment.get('news_count', 0)}
+            Most Relevant Article: {sentiment.get('most_relevant_article', {}).get('title', 'N/A') if sentiment.get('most_relevant_article') else 'N/A'}
             
             Signal: {mtf_analysis.get('signal', 'NEUTRAL')}
             Reasoning: {mtf_analysis.get('reasoning', 'Insufficient data')}
@@ -569,15 +583,15 @@ class CipherAgent:
             6. Clear trading bias (bullish, bearish, or neutral)
             """
             
-            mcp_context.add_system_message(analysis_context)
+            messages_for_llm.append({"role": "system", "content": analysis_context})
             
             # Add user message requesting analysis
             user_message = f"Please analyze {symbol} on the {interval} timeframe and provide trading insights."
-            mcp_context.add_user_message(user_message)
+            messages_for_llm.append({"role": "user", "content": user_message})
             
             # Generate the analysis
             response = await mcp.client.generate(
-                context=mcp_context,
+                messages=messages_for_llm,
                 model=self.settings.SOCIAL_MODEL,
                 max_tokens=4000,
                 temperature=0
