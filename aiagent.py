@@ -216,14 +216,17 @@ class CipherAgent:
             # Add system prompts
             messages_for_llm.append({"role": "system", "content": self.base_system_prompt})
             
-            # Add platform-specific context
+            # Add platform-specific context using the agent's PromptManager
             platform_key = platform or "web"
             try:
-                platform_context = await mcp.prompts.get(platform_key)
+                # Use the prompt_manager instead of mcp.prompts
+                platform_context = self.prompt_manager.get_system_prompt(platform_key)
                 if platform_context:
                     messages_for_llm.append({"role": "system", "content": platform_context})
+                else:
+                    logger.warning(f"No system prompt template found for platform key: {platform_key}")
             except Exception as e:
-                logger.warning(f"Could not get platform context for {platform_key}: {e}")
+                logger.warning(f"Could not get platform context for {platform_key} using PromptManager: {e}", exc_info=True)
             
             # Get conversation history
             conversation_history = await self.message_memory.get_conversation_history(
@@ -248,11 +251,12 @@ class CipherAgent:
                     # Add session break if it's been more than 3 hours
                     if last_dt and (datetime.now(UTC) - last_dt).total_seconds() > 10800:
                         try:
-                            session_break = await mcp.prompts.get("conversation_break")
+                            # Use prompt_manager to get conversation break prompt
+                            session_break = self.prompt_manager.get_conversation_break("new_session")
                             if session_break:
                                 messages_for_llm.append({"role": "system", "content": session_break})
                         except Exception as e:
-                            logger.warning(f"Could not get conversation break prompt: {e}")
+                            logger.warning(f"Could not get conversation break prompt: {e}", exc_info=True)
             
             # Get formatted conversation history
             formatted_history = await self._format_conversation_history(conversation_history)
@@ -308,16 +312,23 @@ class CipherAgent:
             # Set max tokens with context override if provided
             max_tokens = context.get("max_tokens", self.settings.MAX_TOKENS)
             
-            # Generate response using MCP with the new API format
-            response = await mcp.client.generate(
-                messages=messages_for_llm,  # Pass messages directly instead of context
+            # Generate response using the initialized Anthropic client
+            response = await self.anthropic_client.messages.create(
+                messages=messages_for_llm,
                 model=model_to_use,
                 max_tokens=max_tokens,
                 temperature=self.settings.TEMPERATURE
             )
             
-            # Extract and process the response text
-            response_text = response.choices[0].message.content
+            # Extract and process the response text based on Anthropic's response structure
+            response_text = ""
+            if hasattr(response, 'content') and response.content:
+                for block in response.content:
+                    if hasattr(block, 'text'):
+                        response_text += block.text
+            else:
+                logger.warning("Received empty content from Anthropic API")
+                response_text = "Sorry, I encountered an issue generating the response."
             
             # Clean and format response
             cleaned_response = MessageProcessor.clean_message(response_text)
@@ -589,16 +600,23 @@ class CipherAgent:
             user_message = f"Please analyze {symbol} on the {interval} timeframe and provide trading insights."
             messages_for_llm.append({"role": "user", "content": user_message})
             
-            # Generate the analysis
-            response = await mcp.client.generate(
+            # Generate the analysis using Anthropic client
+            response = await self.anthropic_client.messages.create(
                 messages=messages_for_llm,
                 model=self.settings.SOCIAL_MODEL,
                 max_tokens=4000,
                 temperature=0
             )
             
-            # Extract the analysis text
-            analysis = response.choices[0].message.content
+            # Extract the analysis text from Anthropic's response structure
+            analysis = ""
+            if hasattr(response, 'content') and response.content:
+                for block in response.content:
+                    if hasattr(block, 'text'):
+                        analysis += block.text
+            else:
+                logger.warning("Received empty content from Anthropic API for analysis")
+                analysis = "Sorry, I encountered an issue generating the analysis."
             
             # Format for user display if requested
             if for_user_display:

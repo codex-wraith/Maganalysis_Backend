@@ -4,6 +4,10 @@ import logging
 import os
 from datetime import datetime, UTC
 
+# Note: In MCP v1.6.0, FastMCP is used only to register tools, resources, and prompts.
+# It doesn't provide a client for generating responses or direct access to prompts.
+# Use anthropic_client in aiagent.py for directly generating responses.
+
 # Set up logging for MCP
 logging.basicConfig(
     level=os.environ.get("MCP_LOG_LEVEL", "INFO"),
