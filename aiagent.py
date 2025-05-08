@@ -94,9 +94,6 @@ class CipherAgent:
         # Register resources
         self._register_market_resources()
         self._register_memory_resources()
-        
-        # Register prompts
-        self._register_prompts()
     
     def _register_market_tools(self):
         """Register market analysis tools with MCP"""
@@ -135,11 +132,6 @@ class CipherAgent:
         """Register memory resources with MCP"""
         from memory.mcp_resources import register_memory_resources
         register_memory_resources(mcp, self)
-    
-    def _register_prompts(self):
-        """Register prompt templates with MCP"""
-        from prompts.mcp_prompts import register_prompt_templates
-        register_prompt_templates(mcp)
     
     async def _format_conversation_history(self, conversation_history: list) -> str:
         """Format conversation history with proper breaks and timestamps."""
