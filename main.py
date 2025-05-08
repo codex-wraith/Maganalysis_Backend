@@ -515,6 +515,117 @@ async def get_technical_indicators(symbol: str, timeframe: str = "daily"):
         logger.error(f"Technical indicators error: {e}")
         raise HTTPException(status_code=500, detail="Error retrieving technical indicators")
 
+@app.get("/market/data/{symbol}")
+async def get_historical_data(symbol: str, timeframe: str = "1d"):
+    """Get historical price data for a specific symbol with optional timeframe"""
+    try:
+        if not hasattr(app.state, 'market_manager'):
+            raise HTTPException(status_code=503, detail="Market service not initialized")
+            
+        # Map timeframe parameter to Alpha Vantage intervals and functions
+        timeframe_mapping = {
+            "1d": {"interval": "60min", "function": "intraday"}, 
+            "1w": {"interval": "daily", "function": "daily"},
+            "1m": {"interval": "daily", "function": "daily"},
+            "3m": {"interval": "weekly", "function": "weekly"},
+            "1y": {"interval": "monthly", "function": "monthly"},
+            "5y": {"interval": "monthly", "function": "monthly"}
+        }
+        
+        # Use default mapping if timeframe not in predefined list
+        if timeframe not in timeframe_mapping:
+            timeframe = "1d"
+            
+        mapped_timeframe = timeframe_mapping[timeframe]
+        
+        # Check if it's a crypto symbol
+        common_cryptos = ["BTC", "ETH", "USDT", "BNB", "XRP", "ADA", "DOGE", "SOL"]
+        is_crypto = symbol.upper() in common_cryptos
+        
+        # Fetch appropriate data based on timeframe and asset type
+        try:
+            if is_crypto:
+                if mapped_timeframe["function"] == "intraday":
+                    data = await app.state.market_manager.get_crypto_intraday(
+                        symbol, 
+                        "USD", 
+                        interval=mapped_timeframe["interval"]
+                    )
+                elif mapped_timeframe["function"] == "daily":
+                    data = await app.state.market_manager.get_crypto_daily(symbol, "USD")
+                elif mapped_timeframe["function"] == "weekly":
+                    data = await app.state.market_manager.get_crypto_weekly(symbol, "USD")
+                else:  # monthly
+                    data = await app.state.market_manager.get_crypto_monthly(symbol, "USD")
+            else:
+                if mapped_timeframe["function"] == "intraday":
+                    data = await app.state.market_manager.get_intraday_data(
+                        symbol, 
+                        interval=mapped_timeframe["interval"]
+                    )
+                elif mapped_timeframe["function"] == "daily":
+                    data = await app.state.market_manager.get_time_series_daily(symbol)
+                elif mapped_timeframe["function"] == "weekly":
+                    data = await app.state.market_manager.get_time_series_weekly(symbol)
+                else:  # monthly
+                    data = await app.state.market_manager.get_time_series_monthly(symbol)
+                    
+            # Process the data for the frontend
+            time_series_key = next((k for k in data.keys() if "Time Series" in k or "Digital Currency" in k), None)
+            
+            if not time_series_key or not data.get(time_series_key):
+                raise ValueError(f"No time series data available for symbol {symbol} with timeframe {timeframe}")
+                
+            # Extract time series data for the response
+            time_series = data[time_series_key]
+            labels = list(time_series.keys())
+            
+            # Reverse so newest data is last (for charting)
+            labels.reverse()
+            
+            prices = []
+            volumes = []
+            
+            # Extract prices and volumes, handle different field names
+            for label in labels:
+                entry = time_series[label]
+                # Try different field names for closing price
+                price_field = next((entry[k] for k in ['4. close', 'close', '4a. close (USD)'] 
+                                  if k in entry), '0')
+                prices.append(float(price_field))
+                
+                # Try different field names for volume
+                volume_field = next((entry[k] for k in ['5. volume', 'volume', '5. volume (USD)'] 
+                                   if k in entry), '0')
+                volumes.append(float(volume_field))
+                
+            # Format date labels based on timeframe for display
+            formatted_labels = []
+            for label in labels:
+                date = datetime.fromisoformat(label.replace('Z', '+00:00')) if 'T' in label else datetime.strptime(label, "%Y-%m-%d")
+                if timeframe == "1d":
+                    formatted_labels.append(date.strftime("%H:%M"))
+                else:
+                    formatted_labels.append(date.strftime("%b %d"))
+            
+            # Return in the format expected by the frontend
+            return {
+                "prices": prices,
+                "volumes": volumes,
+                "labels": formatted_labels,
+                "symbol": symbol,
+                "timeframe": timeframe,
+                "timestamp": datetime.now(UTC).isoformat()
+            }
+                
+        except Exception as e:
+            logger.error(f"Error fetching historical data for {symbol}: {e}")
+            raise HTTPException(status_code=500, detail=f"Failed to fetch historical data for {symbol}: {str(e)}")
+            
+    except Exception as e:
+        logger.error(f"Historical data error: {e}")
+        raise HTTPException(status_code=500, detail="Error retrieving historical data")
+
 @app.get("/market/news-sentiment/{symbol}")
 async def get_news_sentiment(symbol: str):
     """Get news sentiment data for a specific symbol"""
