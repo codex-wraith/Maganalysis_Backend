@@ -17,7 +17,10 @@ from market.indicators import TechnicalIndicators
 from market.price_levels import PriceLevelAnalyzer, LevelType
 from utils.message_handling import MessageProcessor
 
-# MCP tools are accessed directly on the mcp object, not through mcp.tools
+# Import the required functions directly from their modules
+from market.mcp_tools import get_technical_indicators, get_news_sentiment, get_raw_market_data, add_market_analysis_to_context
+from market.mcp_price_levels import get_price_levels
+from market.mcp_multi_timeframe import analyze_multi_timeframe
 
 logger = logging.getLogger(__name__)
 
@@ -269,7 +272,7 @@ class CipherAgent:
                     
                     # Get market analysis as string
                     try:
-                        from market.mcp_tools import add_market_analysis_to_context
+                        # Use the already imported add_market_analysis_to_context function
                         
                         # Call WITHOUT messages_list to get the string content
                         market_analysis_context_str = await add_market_analysis_to_context(
@@ -389,7 +392,7 @@ class CipherAgent:
         
         try:
             # Use MCP tool to get news sentiment
-            news_data = await mcp.get_news_sentiment(symbol)
+            news_data = await get_news_sentiment(symbol)
             
             # Process sentiment data
             sentiment_score = news_data.get("sentiment", {}).get("score", 50)
@@ -509,7 +512,7 @@ class CipherAgent:
             # Get multi-timeframe support/resistance levels
             try:
                 # First get data for the primary timeframe to extract current price and ATR
-                primary_tech_data = await mcp.get_technical_indicators(symbol, asset_type, interval)
+                primary_tech_data = await get_technical_indicators(symbol, asset_type, interval)
                 if primary_tech_data and "price_data" in primary_tech_data:
                     current_price = primary_tech_data.get("price_data", {}).get("current")
                     latest_atr = primary_tech_data.get("indicators", {}).get("atr", {}).get("value")
@@ -517,8 +520,8 @@ class CipherAgent:
                 # Now get multi-timeframe analysis
                 if current_price:
                     # Get MTF analysis which includes consolidated support/resistance zones
-                    mtf_analysis = await mcp.analyze_multi_timeframe(symbol, asset_type, interval)
-                    price_levels = await mcp.get_price_levels(symbol, asset_type, interval)
+                    mtf_analysis = await analyze_multi_timeframe(symbol, asset_type, interval)
+                    price_levels = await get_price_levels(symbol, asset_type, interval)
                     
                     # Generate a text summary of MTF analysis that reflects the data
                     mtf_context = "MULTI-TIMEFRAME ANALYSIS:\n\n"
@@ -560,13 +563,13 @@ class CipherAgent:
             system_prompts_content.append(mtf_context)
             
             # Gather technical analysis data
-            tech_data = await mcp.get_technical_indicators(symbol, asset_type, interval)
-            price_levels = await mcp.get_price_levels(symbol, asset_type, interval)
-            sentiment = await mcp.get_news_sentiment(symbol)
+            tech_data = await get_technical_indicators(symbol, asset_type, interval)
+            price_levels = await get_price_levels(symbol, asset_type, interval)
+            sentiment = await get_news_sentiment(symbol)
             
             # Get multi-timeframe analysis if not already fetched
             if 'mtf_analysis' not in locals() or not mtf_analysis:
-                mtf_analysis = await mcp.analyze_multi_timeframe(symbol, asset_type, interval)
+                mtf_analysis = await analyze_multi_timeframe(symbol, asset_type, interval)
             
             # Add market data to context
             analysis_context = f"""
@@ -943,7 +946,7 @@ class CipherAgent:
         """
         try:
             # Get technical data which includes current price
-            tech_data = await mcp.get_technical_indicators(symbol, asset_type, "60min")
+            tech_data = await get_technical_indicators(symbol, asset_type, "60min")
             
             # Extract current price and format timestamp
             current_price = tech_data.get("price_data", {}).get("current", fallback_price)
@@ -969,8 +972,8 @@ class CipherAgent:
         """
         try:
             # Get technical indicators data
-            tech_data = await mcp.get_technical_indicators(symbol, asset_type, interval)
-            price_levels = await mcp.get_price_levels(symbol, asset_type, interval)
+            tech_data = await get_technical_indicators(symbol, asset_type, interval)
+            price_levels = await get_price_levels(symbol, asset_type, interval)
             
             # Extract key data
             price_data = tech_data.get("price_data", {})
@@ -1035,7 +1038,7 @@ class CipherAgent:
         """
         try:
             # Get raw market data
-            market_data = await mcp.get_raw_market_data(symbol, asset_type, interval)
+            market_data = await get_raw_market_data(symbol, asset_type, interval)
             
             # Get time series key
             time_series_key = None
@@ -1078,8 +1081,8 @@ class CipherAgent:
                     return cached_data
             
             # Get comprehensive price level data across timeframes
-            mtf_analysis = await mcp.analyze_multi_timeframe(symbol, asset_type, main_interval)
-            price_levels = await mcp.get_price_levels(symbol, asset_type, main_interval)
+            mtf_analysis = await analyze_multi_timeframe(symbol, asset_type, main_interval)
+            price_levels = await get_price_levels(symbol, asset_type, main_interval)
             
             if "error" in mtf_analysis or "error" in price_levels:
                 logger.warning(f"Error in multi-timeframe analysis for {symbol}: {mtf_analysis.get('error') or price_levels.get('error')}")
@@ -1325,7 +1328,7 @@ class CipherAgent:
                 # Try to get price data to validate the symbol
                 try:
                     # Check if it's a stock
-                    stock_data = await mcp.get_technical_indicators(potential_symbol, "stock", "daily")
+                    stock_data = await get_technical_indicators(potential_symbol, "stock", "daily")
                     if "error" not in stock_data:
                         # It's a valid stock
                         return {
@@ -1342,7 +1345,7 @@ class CipherAgent:
                 
                 # Check if it's a crypto
                 try:
-                    crypto_data = await mcp.get_technical_indicators(potential_symbol, "crypto", "daily")
+                    crypto_data = await get_technical_indicators(potential_symbol, "crypto", "daily")
                     if "error" not in crypto_data:
                         # It's a valid crypto
                         return {
@@ -1359,6 +1362,7 @@ class CipherAgent:
             
             # If we couldn't find a valid asset or no potential symbol was found,
             # perform a general search using the Tavily API
+            # Note: Need to use mcp.search_market_information since we didn't import this function
             search_results = await mcp.search_market_information(query, search_type)
             
             return {
@@ -1393,15 +1397,15 @@ class CipherAgent:
             # Use MCP tools to get comprehensive data
             
             # Get technical indicators
-            tech_data = await mcp.get_technical_indicators(symbol, asset_type, timeframe)
+            tech_data = await get_technical_indicators(symbol, asset_type, timeframe)
             if "error" in tech_data:
                 return {"error": tech_data["error"], "symbol": symbol}
                 
             # Get price levels
-            price_levels = await mcp.get_price_levels(symbol, asset_type, timeframe)
+            price_levels = await get_price_levels(symbol, asset_type, timeframe)
             
             # Get multi-timeframe analysis for broader context
-            mtf_analysis = await mcp.analyze_multi_timeframe(symbol, asset_type, timeframe)
+            mtf_analysis = await analyze_multi_timeframe(symbol, asset_type, timeframe)
             
             # Extract key data points
             current_price = tech_data.get("price_data", {}).get("current", 0)
@@ -1526,7 +1530,7 @@ class CipherAgent:
                 return {"error": trend_strategy["error"], "symbol": symbol}
             
             # Get news sentiment
-            sentiment_data = await mcp.get_news_sentiment(symbol)
+            sentiment_data = await get_news_sentiment(symbol)
             
             # Analyze the asset
             analysis = await self.analyze_asset(symbol, asset_type, "USD", timeframe, False)
