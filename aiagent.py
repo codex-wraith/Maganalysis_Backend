@@ -498,11 +498,6 @@ class CipherAgent:
                 
             system_prompts_content.append(analysis_prompt)
             
-            # Import tools needed for analysis
-            from market.mcp_tools import get_technical_indicators, get_news_sentiment
-            from market.mcp_price_levels import get_price_levels
-            from market.mcp_multi_timeframe import analyze_multi_timeframe
-            
             # Generate dynamic multi-timeframe analysis instead of using a static template
             # First, get data across multiple timeframes to build a data-driven MTF context
             current_price = None
@@ -511,6 +506,11 @@ class CipherAgent:
             
             # Get multi-timeframe support/resistance levels
             try:
+                # Import tools inside the try block to ensure they're fully initialized
+                from market.mcp_tools import get_technical_indicators, get_news_sentiment
+                from market.mcp_price_levels import get_price_levels
+                from market.mcp_multi_timeframe import analyze_multi_timeframe
+                
                 # First get data for the primary timeframe to extract current price and ATR
                 primary_tech_data = await get_technical_indicators(symbol, asset_type, interval)
                 if primary_tech_data and "price_data" in primary_tech_data:
@@ -945,7 +945,8 @@ class CipherAgent:
             tuple: (price, timestamp)
         """
         try:
-            # Use MCP tool to get real-time price
+            # Import and use MCP tool to get real-time price inside the try block
+            # This ensures the tool is fully initialized before use
             from market.mcp_tools import get_technical_indicators
             
             # Get technical data which includes current price
@@ -974,7 +975,7 @@ class CipherAgent:
             dict: Analysis results for the timeframe
         """
         try:
-            # Use MCP tools to get technical indicators and price levels
+            # Import MCP and tools inside the try block to ensure they're fully initialized
             from mcp_server import mcp
             from market.mcp_tools import get_technical_indicators
             from market.mcp_price_levels import get_price_levels
@@ -1045,7 +1046,7 @@ class CipherAgent:
             tuple: (market_data, time_series_key)
         """
         try:
-            # Use MCP tools to get data
+            # Import MCP tools inside the try block to ensure they're fully initialized
             from market.mcp_tools import get_raw_market_data
             
             # Get raw market data
@@ -1090,8 +1091,8 @@ class CipherAgent:
                 if cache_age.total_seconds() < 300:  # 5 minutes in seconds
                     logger.debug(f"Using cached multi-timeframe data for {symbol} ({main_interval})")
                     return cached_data
-                    
-            # Use MCP tool to analyze multi-timeframe levels
+            
+            # Import MCP tools inside the try block to ensure they're fully initialized
             from market.mcp_multi_timeframe import analyze_multi_timeframe
             from market.mcp_price_levels import get_price_levels
             
