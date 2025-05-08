@@ -10,13 +10,11 @@ from moralis import evm_api
 logger = logging.getLogger(__name__)
 
 class MarketManager:
-    def __init__(self, http_session: aiohttp.ClientSession):
+    def __init__(self, settings: AISettings):
+        self.settings = settings
         self.last_update = None
         self.current_market_cap: Optional[float] = None
         self.TOTAL_SUPPLY = 47_000_000  # 47 million tokens
-        
-        # Store the shared HTTP session
-        self.http_session = http_session
         
         # Credentials for crypto market data from Moralis
         self.moralis_api_key = os.environ.get('MORALIS_API_KEY')
@@ -112,27 +110,23 @@ class MarketManager:
     # ----------------------------
     # Stock market / broader market (Alpha Vantage) methods
     # ----------------------------
-    async def _fetch_alpha_data(self, params: Dict[str, Any], http_session=None) -> Dict:
+    async def _fetch_alpha_data(self, params: Dict[str, Any]) -> Dict:
         """
         Helper function to perform an asynchronous GET request to Alpha Vantage.
         Ensures that the API key and realtime entitlement are added to the request parameters.
         """
         params['apikey'] = self.alphavantage_api_key
         params['entitlement'] = 'realtime'
-        
-        # Use provided session or the instance's session
-        session = http_session or self.http_session
-        
         try:
-            async with session.get(self.alpha_base_url, params=params) as response:
-                if response.status != 200:
-                    logger.error(f"Alpha Vantage API returned status {response.status} for function {params.get('function')}")
-                    return {}
-                data = await response.json()
-                # Don't log the full API response as it can be very large
-                logger.info(f"Alpha Vantage API response received for {params.get('function')}")
-                
-                return data
+            async with aiohttp.ClientSession() as session:
+                async with session.get(self.alpha_base_url, params=params) as response:
+                    if response.status != 200:
+                        logger.error(f"Alpha Vantage API returned status {response.status} for function {params.get('function')}")
+                        return {}
+                    data = await response.json()
+                    # Don't log the full API response as it can be very large
+                    logger.info(f"Alpha Vantage API response received for {params.get('function')}")
+                    return data
         except Exception as e:
             logger.error(f"Error fetching data from Alpha Vantage: {e}", exc_info=True)
             return {}
@@ -218,7 +212,7 @@ class MarketManager:
         data = await self._fetch_alpha_data(params)
         return data
 
-    async def get_time_series_daily(self, symbol: str, outputsize: str = "full", datatype: str = "json", http_session: aiohttp.ClientSession = None) -> Dict:
+    async def get_time_series_daily(self, symbol: str, outputsize: str = "full", datatype: str = "json") -> Dict:
         """
         Retrieve daily time series data for a given stock symbol using the TIME_SERIES_DAILY endpoint.
         
@@ -303,8 +297,7 @@ class MarketManager:
         self,
         symbol: str,
         market: str,
-        datatype: str = "json",
-        http_session: aiohttp.ClientSession = None
+        datatype: str = "json"
     ) -> Dict:
         """
         Retrieve daily time series data for a specified cryptocurrency using the
@@ -404,7 +397,7 @@ class MarketManager:
         
         return {"indices": indices}
         
-    async def get_news_sentiment(self, ticker: str = None, topics: str = None, time_from: str = None, limit: int = 100, http_session: aiohttp.ClientSession = None) -> Dict:
+    async def get_news_sentiment(self, ticker: str = None, topics: str = None, time_from: str = None, limit: int = 100) -> Dict:
         """
         Retrieve news sentiment data for a specified ticker and/or topics.
         
