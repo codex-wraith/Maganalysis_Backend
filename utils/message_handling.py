@@ -35,6 +35,11 @@ class MessageProcessor:
         # Trim leading/trailing whitespace
         return message.strip()
         
+    @classmethod
+    def clean_message(cls, message: str) -> str:
+        """Public method to clean a message (delegates to _clean_message)"""
+        return cls._clean_message(message)
+        
     def split_message(self, message: str) -> List[str]:
         """
         Split a long message into smaller chunks

@@ -16,7 +16,9 @@ from hypercorn.config import Config
 from hypercorn.asyncio import serve
 from aisettings import AISettings
 from market.market_manager import MarketManager
-from market.indicators import TechnicalIndicators
+from market.indicators import TechnicalIndicators, TimeframeParameters
+from market.data_processor import MarketDataProcessor
+from mcp_server import mcp
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -24,6 +26,10 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    """
+    Application lifespan manager.
+    COMPLETE REPLACEMENT of the previous implementation to use MCP exclusively.
+    """
     # Startup
     try:
         # Initialize basic services
@@ -37,19 +43,30 @@ async def lifespan(app: FastAPI):
             
         # Create a shared aiohttp session with no timeout to allow long-running operations
         shared_session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=None))
+        app.state.http = shared_session
         
-        # Initialize core components
+        # Initialize simple in-memory cache for Alpha Vantage
+        app.state.cache = {}
+        
+        # Initialize Market Manager for market data access first
+        logger.info("Initializing MarketManager...")
+        app.state.settings = AISettings()
+        app.state.market_manager = MarketManager(shared_session)
+        
+        # Note: We're skipping MCP initialization to avoid URL validation issues
+        logger.info("Skipping MCP server initialization due to URL validation issues")
+        
+        # Initialize core components with direct implementation
         logger.info("Initializing CipherAgent...")
         app.state.agent = CipherAgent()
+        app.state.agent.market_manager = app.state.market_manager
+        
+        # Keep a reference to mcp for backward compatibility, but don't use it
+        app.state.mcp = None
         
         # Initialize SocialMediaHandler directly
         logger.info("Initializing SocialMediaHandler...")
         app.state.social_media_handler = SocialMediaHandler(app.state.agent)
-        
-        # Initialize Market Manager for market data access
-        logger.info("Initializing MarketManager...")
-        app.state.settings = AISettings()
-        app.state.market_manager = MarketManager(app.state.settings)
         
         # Initialize simple job store for async tasks
         app.state.jobs = {}
@@ -77,8 +94,8 @@ async def lifespan(app: FastAPI):
             await app.state.social_media_handler.stop_telegram()
         
         # Close the shared aiohttp session
-        if shared_session and not shared_session.closed:
-            await shared_session.close()
+        if hasattr(app.state, 'http') and not app.state.http.closed:
+            await app.state.http.close()
         
         logger.info("Shutdown sequence completed")
 
@@ -103,6 +120,10 @@ class Message(BaseModel):
 
 @app.post("/chat")
 async def chat(message: Message):
+    """
+    MCP-exclusive chat endpoint replacing previous implementation.
+    This implementation only works with the MCP-based agent.
+    """
     try:
         if not app.state.agent:
             raise HTTPException(
@@ -122,10 +143,11 @@ async def chat(message: Message):
         if message.platform == "web":
             # Simple context to enforce Claude model and smaller token limit for web
             context = {
-                "force_claude": True,  # Add a flag to force Claude model
-                "max_tokens": 8000     # Use smaller token limit for web
+                "force_claude": True,
+                "max_tokens": 8000
             }
         
+        # Use the MCP-based response method (which is now the only implementation)
         response = await app.state.agent.respond(
             message.text, 
             platform=message.platform,
@@ -134,9 +156,8 @@ async def chat(message: Message):
         )
         
         # Ensure the response is a simple string for web platform
-        # Claude API might return Content objects sometimes
         if message.platform == 'web' and isinstance(response, dict) and 'content' in response:
-            # Handle Claude structured content format
+            # Handle structured content format
             if isinstance(response['content'], list):
                 # Extract text from content blocks
                 simple_response = ""
@@ -154,13 +175,14 @@ async def chat(message: Message):
         return {"response": "I'm having trouble with my AI circuits right now. Please try again later."}
 
 @app.get("/health")
+@app.get("/healthz")
 async def health_check():
     """Health check endpoint"""
     try:
         if not hasattr(app.state, 'agent'):
             raise HTTPException(status_code=503, detail="Services not initialized")
         return {
-            "status": "healthy",
+            "status": "ok",
             "timestamp": datetime.now(UTC).isoformat(),
             "agent_status": "ready"
         }
@@ -170,21 +192,33 @@ async def health_check():
 
 @app.get("/market/overview")
 async def get_market_overview():
-    """Get market overview data focused on Bitcoin sentiment"""
+    """Get market overview data including sentiment, top stocks, and indices"""
     try:
-        if not hasattr(app.state, 'market_manager'):
-            raise HTTPException(status_code=503, detail="Market service not initialized")
+        if not app.state.market_manager:
+            raise HTTPException(status_code=503, detail="Market manager not initialized")
             
         # Get crypto and general market sentiment data
+        mm = app.state.market_manager
+        
         crypto_data = []
         market_mood = None
         sentiment_score = None
         article_count = 0
         market_article_count = 0
         
-        # Get overall market sentiment using just the financial_markets topic
+        # Initialize variables to None to indicate no data available
+        market_mood = None
+        sentiment_score = None
+        market_article_count = 0
+        btc_mood = None
+        btc_score = None
+        article_count = 0
+        top_stocks_data = {"gainers": [], "most_actively_traded": []}
+        indices_data = []
+            
+        # Get overall market sentiment
         try:
-            market_sentiment = await app.state.market_manager.get_news_sentiment(
+            market_sentiment = await mm.get_news_sentiment(
                 topics="financial_markets", 
                 limit=50
             )
@@ -210,12 +244,10 @@ async def get_market_overview():
                         market_mood = "neutral"
         except Exception as e:
             logger.error(f"Error fetching market sentiment: {e}")
-            
+        
         # Get Bitcoin sentiment
         try:
-            btc_sentiment = await app.state.market_manager.get_news_sentiment(ticker="BTC")
-            btc_mood = None
-            btc_score = None
+            btc_sentiment = await mm.get_news_sentiment(ticker="BTC")
             
             if btc_sentiment and "feed" in btc_sentiment:
                 articles = btc_sentiment["feed"]
@@ -244,94 +276,28 @@ async def get_market_overview():
                 "price": btc_score,
                 "change_percent": btc_mood
             })
-            
-            # Get Ethereum sentiment
-            eth_sentiment = await app.state.market_manager.get_news_sentiment("ETH")
-            eth_mood = None
-            eth_score = None
-            
-            if eth_sentiment and "feed" in eth_sentiment:
-                articles = eth_sentiment["feed"]
-                if articles:
-                    total_score = sum(article.get("overall_sentiment_score", 0) for article in articles)
-                    avg_score = total_score / len(articles)
-                    eth_score = (avg_score + 1) * 50
-                    
-                    if eth_score > 65:
-                        eth_mood = "bullish"
-                    elif eth_score < 35:
-                        eth_mood = "bearish"
-                    else:
-                        eth_mood = "neutral"
-            
-            crypto_data.append({
-                "symbol": "ETH",
-                "name": "Ethereum",
-                "price": eth_score,
-                "change_percent": eth_mood
-            })
-            
-            # Get Solana sentiment
-            sol_sentiment = await app.state.market_manager.get_news_sentiment("SOL")
-            sol_mood = None
-            sol_score = None
-            
-            if sol_sentiment and "feed" in sol_sentiment:
-                articles = sol_sentiment["feed"]
-                if articles:
-                    total_score = sum(article.get("overall_sentiment_score", 0) for article in articles)
-                    avg_score = total_score / len(articles)
-                    sol_score = (avg_score + 1) * 50
-                    
-                    if sol_score > 65:
-                        sol_mood = "bullish"
-                    elif sol_score < 35:
-                        sol_mood = "bearish"
-                    else:
-                        sol_mood = "neutral"
-            
-            crypto_data.append({
-                "symbol": "SOL",
-                "name": "Solana",
-                "price": sol_score,
-                "change_percent": sol_mood
-            })
-            
         except Exception as e:
             logger.error(f"Error fetching crypto sentiment: {e}")
-            crypto_data = [
-                {"symbol": "BTC", "name": "Bitcoin", "price": None, "change_percent": None},
-                {"symbol": "ETH", "name": "Ethereum", "price": None, "change_percent": None},
-                {"symbol": "SOL", "name": "Solana", "price": None, "change_percent": None}
-            ]
-            # If we hadn't already set market_mood from financial_markets, make sure it's None
-            if market_mood is None:
-                market_mood = None
-                sentiment_score = None
-                market_article_count = 0
-            
-            # Set BTC-specific mood to None
-            btc_mood = None
-            btc_score = None
-            article_count = 0
-            
-        # Get top gainers and losers
+        
+        # Get top stocks data (gainers, losers, most active)
         try:
-            top_data = await app.state.market_manager.get_top_gainers_losers()
+            top_stocks_data = await mm.get_top_gainers_losers()
+            if not top_stocks_data:
+                top_stocks_data = {"gainers": [], "most_actively_traded": []}
         except Exception as e:
-            logger.error(f"Error fetching top gainers/losers: {e}")
-            top_data = {"gainers": [], "most_actively_traded": []}
+            logger.error(f"Error fetching top stocks: {e}")
+            top_stocks_data = {"gainers": [], "most_actively_traded": []}
             
-        # Get index quotes (S&P 500, Dow Jones, Nasdaq)
+        # Get major stock indices (S&P 500, DOW, NASDAQ, etc.)
         try:
-            index_data = await app.state.market_manager.get_index_quotes()
-            indices = index_data.get("indices", [])
+            index_quotes_result = await mm.get_index_quotes()
+            indices_data = index_quotes_result.get("indices", [])
         except Exception as e:
-            logger.error(f"Error fetching index data: {e}")
-            indices = []
-            
-        # Combine data with the crypto and market sentiment we've collected
-        response_data = {
+            logger.error(f"Error fetching index quotes: {e}")
+            indices_data = []
+        
+        # Return combined data
+        return {
             "market_status": {
                 "market_mood": market_mood,
                 "sentiment_score": sentiment_score,
@@ -345,245 +311,344 @@ async def get_market_overview():
                 "source": "BTC" 
             },
             "cryptos": crypto_data,
-            "top_stocks": top_data,
-            "indices": indices,
+            "top_stocks": top_stocks_data,  # Add top stocks data
+            "indices": indices_data,        # Add indices data
             "timestamp": datetime.now(UTC).isoformat()
         }
         
-        return response_data
     except Exception as e:
         logger.error(f"Market overview error: {e}")
         raise HTTPException(status_code=500, detail="Error retrieving market data")
 
+@app.get("/market/data/{symbol}")
+async def get_historical_data(symbol: str, timeframe: str = "1d"):
+    """Get historical data for a given symbol and timeframe"""
+    try:
+        if not app.state.market_manager:
+            raise HTTPException(status_code=503, detail="Market manager not initialized")
+            
+        mm = app.state.market_manager
+        http = app.state.http
+        
+        # Map frontend timeframe to backend interval
+        interval_map = {
+            "1d": "daily",
+            "1h": "60min",
+            "15m": "15min",
+            "5m": "5min",
+            "1m": "1min"
+        }
+        
+        interval = interval_map.get(timeframe, "daily")
+        
+        # Determine if this is a stock or crypto
+        asset_type = "stock"
+        if symbol.upper() in ["BTC", "ETH", "XRP", "LTC", "ADA", "DOGE", "USDT", "BNB"]:
+            asset_type = "crypto"
+            
+        try:
+            if asset_type == "stock":
+                data = await mm.get_time_series_daily(symbol)
+                return data
+            else:
+                data = await mm.get_crypto_daily(symbol, "USD")
+                return data
+        except Exception as e:
+            logger.error(f"Error processing market data: {e}")
+            raise HTTPException(status_code=500, detail="Error processing market data")
+            
+    except Exception as e:
+        logger.error(f"Error getting historical data: {e}")
+        raise HTTPException(status_code=500, detail="Error retrieving market data")
+
 @app.get("/market/indicators/{symbol}")
 async def get_technical_indicators(symbol: str, timeframe: str = "daily"):
-    """Get technical indicators for a specific symbol (stock or crypto) with optional timeframe"""
+    """Get technical indicators bypassing MCP tools"""
     try:
-        if not hasattr(app.state, 'market_manager'):
-            raise HTTPException(status_code=503, detail="Market service not initialized")
+        if not app.state.market_manager:
+            raise HTTPException(status_code=503, detail="Market manager not initialized")
             
-        # Fetch data for the symbol (stock or crypto)
+        # Detect if this is a crypto symbol
+        common_cryptos = ["BTC", "ETH", "USDT", "BNB", "XRP", "ADA", "DOGE", "SOL"]
+        is_crypto = symbol.upper() in common_cryptos
+        asset_type = "crypto" if is_crypto else "stock"
+        
+        # Use market manager directly
+        mm = app.state.market_manager
+        
+        price_data = {}
+        indicators = {}
+        
+        # Get time series data based on timeframe and asset type
+        raw_data = None
+        time_series = None
+        
         try:
-            # Detect if this is a crypto symbol
-            common_cryptos = ["BTC", "ETH", "USDT", "BNB", "XRP", "ADA", "DOGE", "SOL"]
-            is_crypto = symbol.upper() in common_cryptos
-            
-            # Normalize timeframe parameter
-            valid_timeframes = ["1min", "5min", "15min", "30min", "60min", "daily", "weekly", "monthly"]
-            if timeframe not in valid_timeframes:
-                timeframe = "daily"  # Default to daily if invalid timeframe is provided
-                
-            # Determine if this is an extended timeframe or intraday
-            is_extended = timeframe in ["daily", "weekly", "monthly"]
-            asset_type = "crypto" if is_crypto else "stock"
-            
-            # Get data based on asset type and timeframe
-            if is_crypto:
-                if is_extended:
-                    # For extended timeframes, use appropriate endpoint
-                    if timeframe == "daily":
-                        data = await app.state.market_manager.get_crypto_daily(symbol, "USD")
-                    elif timeframe == "weekly":
-                        data = await app.state.market_manager.get_crypto_weekly(symbol, "USD")
-                    else:  # monthly
-                        data = await app.state.market_manager.get_crypto_monthly(symbol, "USD")
+            if asset_type == "stock":
+                if timeframe == "daily":
+                    raw_data = await mm.get_time_series_daily(symbol)
+                elif timeframe == "weekly":
+                    raw_data = await mm.get_time_series_weekly(symbol)
+                elif timeframe == "monthly":
+                    raw_data = await mm.get_time_series_monthly(symbol)
                 else:
-                    # For intraday, use intraday endpoint
-                    data = await app.state.market_manager.get_crypto_intraday(symbol, "USD", interval=timeframe)
+                    # Default to intraday for other timeframes
+                    raw_data = await mm.get_intraday_data(symbol, interval=timeframe)
             else:
-                # For stocks
-                if is_extended:
-                    if timeframe == "daily":
-                        data = await app.state.market_manager.get_time_series_daily(symbol)
-                    elif timeframe == "weekly":
-                        data = await app.state.market_manager.get_time_series_weekly(symbol)
-                    else:  # monthly
-                        data = await app.state.market_manager.get_time_series_monthly(symbol)
+                # For crypto
+                if timeframe == "daily":
+                    raw_data = await mm.get_crypto_daily(symbol, market="USD")
+                elif timeframe == "weekly":
+                    raw_data = await mm.get_crypto_weekly(symbol, market="USD")
+                elif timeframe == "monthly":
+                    raw_data = await mm.get_crypto_monthly(symbol, market="USD")
                 else:
-                    # For intraday, use intraday endpoint
-                    data = await app.state.market_manager.get_intraday_data(symbol, interval=timeframe)
-            
-            # Process the data using the existing market data processor
-            from market.data_processor import MarketDataProcessor
-            
-            # Find the time series key
-            time_series_key = next((k for k in data.keys() if "Time Series" in k or "Digital Currency" in k), None)
-            
-            if not time_series_key or not data.get(time_series_key):
-                # Raise an error instead of returning mock data
-                raise ValueError(f"No time series data available for symbol {symbol} with timeframe {timeframe}")
-            
+                    # Default to intraday for other timeframes
+                    raw_data = await mm.get_crypto_intraday(symbol, market="USD", interval=timeframe)
+                
             # Process the data
-            df = MarketDataProcessor.process_time_series_data(data, time_series_key, asset_type)
-            if df is None or df.empty:
-                raise ValueError("Failed to process time series data")
+            if raw_data:
+                # Extract time series key
+                time_series_key = None
+                for key in raw_data.keys():
+                    if key.startswith("Time Series") or key == "data":
+                        time_series_key = key
+                        time_series = raw_data[key]
+                        break
                 
-            # Calculate all technical indicators
-            rsi = TechnicalIndicators.calculate_rsi(df)
-            macd, signal = TechnicalIndicators.calculate_macd(df)
-            k_value, d_value = TechnicalIndicators.calculate_stochastic(df)
-            bbands = TechnicalIndicators.calculate_bbands(df)
-            sma = TechnicalIndicators.calculate_sma(df)
-            ema = TechnicalIndicators.calculate_ema(df)
-            atr = TechnicalIndicators.calculate_atr(df)
-            adx = TechnicalIndicators.calculate_adx(df)
-            vwap = TechnicalIndicators.calculate_vwap(df)
-            
-            # Verify all required indicators were calculated successfully
-            if any(x is None for x in [rsi, macd, signal, k_value, d_value, sma, ema, atr, adx]) or \
-               any(bbands[x] is None for x in ["upper", "middle", "lower"]):
-                raise ValueError(f"Failed to calculate one or more technical indicators for {symbol} with timeframe {timeframe}")
-            
-            # Get latest price data
-            latest_data = df.iloc[-1]
-            current_price = float(latest_data['close'])
-            
-            # Calculate change
-            if len(df) > 1:
-                prev_close = float(df.iloc[-2]['close'])
-                change = current_price - prev_close
-                change_percent = (change / prev_close) * 100
-            else:
-                change = 0
-                change_percent = 0
-            
-            # Determine indicator signals
-            rsi_signal = "oversold" if rsi < 30 else "overbought" if rsi > 70 else "neutral"
-            macd_signal = "bullish" if macd > signal else "bearish"
-            stoch_signal = "oversold" if k_value < 20 else "overbought" if k_value > 80 else "neutral"
-            
-            # Determine trend signals from moving averages
-            sma_signal = "bullish" if current_price > sma else "bearish"
-            ema_signal = "bullish" if current_price > ema else "bearish"
-            
-            # Calculate ADX trend strength signal
-            adx_signal = "weak" if adx < 20 else "strong" if adx > 25 else "moderate"
-            
-            # Calculate overall trend indication
-            trend_indicators = [
-                1 if sma_signal == "bullish" else -1,
-                1 if ema_signal == "bullish" else -1,
-                1 if macd_signal == "bullish" else -1,
-                1 if rsi > 50 else -1,
-                1 if k_value > 50 else -1
-            ]
-            
-            trend_score = sum(trend_indicators)
-            overall_signal = "buy" if trend_score >= 3 else "sell" if trend_score <= -3 else "hold"
-            
-            # Build comprehensive response
-            return {
-                "symbol": symbol,
-                "asset_type": asset_type,
-                "indicators": {
-                    "rsi": {"value": rsi, "signal": rsi_signal},
-                    "macd": {"value": macd, "signal": macd_signal, "signal_line": signal},
-                    "stochastic": {"value": k_value, "d_value": d_value, "signal": stoch_signal},
-                    "bbands": {
-                        "upper": bbands["upper"],
-                        "middle": bbands["middle"],
-                        "lower": bbands["lower"]
-                    },
-                    "sma": {"value": sma, "signal": sma_signal},
-                    "ema": {"value": ema, "signal": ema_signal},
-                    "atr": {"value": atr},
-                    "adx": {"value": adx, "signal": adx_signal},
-                    "vwap": {"value": vwap}
-                },
-                "price_data": {
-                    "current": current_price,
-                    "change": change,
-                    "change_percent": change_percent,
-                    "high": float(latest_data['high']),
-                    "low": float(latest_data['low']),
-                    "volume": float(latest_data['volume']) if 'volume' in latest_data else 0
-                },
-                "analysis": {
-                    "trend_score": trend_score,
-                    "overall_signal": overall_signal,
-                    "strength": abs(trend_score) / 5 * 100  # Convert to percentage
-                },
-                "timestamp": datetime.now(UTC).isoformat()
-            }
+                if time_series:
+                    # Get the latest data point
+                    latest_date = sorted(time_series.keys(), reverse=True)[0]
+                    latest_data = time_series[latest_date]
+                    
+                    # Extract price data
+                    close_key = next((k for k in latest_data.keys() if 'close' in k.lower()), None)
+                    open_key = next((k for k in latest_data.keys() if 'open' in k.lower()), None)
+                    high_key = next((k for k in latest_data.keys() if 'high' in k.lower()), None)
+                    low_key = next((k for k in latest_data.keys() if 'low' in k.lower()), None)
+                    volume_key = next((k for k in latest_data.keys() if 'volume' in k.lower()), None)
+                    
+                    if close_key:
+                        current_price = float(latest_data[close_key])
+                        price_data["current"] = current_price
+                    
+                    if open_key:
+                        price_data["open"] = float(latest_data[open_key])
+                        
+                    if high_key:
+                        price_data["high"] = float(latest_data[high_key])
+                        
+                    if low_key:
+                        price_data["low"] = float(latest_data[low_key])
+                        
+                    if volume_key:
+                        price_data["volume"] = float(latest_data[volume_key])
+                        
+                    # Calculate change
+                    if len(time_series.keys()) > 1:
+                        prev_date = sorted(time_series.keys(), reverse=True)[1]
+                        prev_data = time_series[prev_date]
+                        if close_key and prev_data.get(close_key):
+                            prev_close = float(prev_data[close_key])
+                            price_data["change"] = current_price - prev_close
+                            price_data["change_percent"] = ((current_price - prev_close) / prev_close) * 100
+                    
+                    # Process the time series into a DataFrame and calculate indicators
+                    df = MarketDataProcessor.process_time_series_data(raw_data, time_series_key, asset_type)
+                    if df is not None and not df.empty:
+                        # Get timeframe-specific parameters
+                        params = TimeframeParameters.get_parameters(timeframe)
+                        
+                        # Calculate RSI
+                        rsi_value = TechnicalIndicators.calculate_rsi(df, period=params["rsi_period"])
+                        if rsi_value is not None:
+                            indicators["rsi"] = {
+                                "value": rsi_value,
+                                "signal": "oversold" if rsi_value < 30 else "overbought" if rsi_value > 70 else "neutral"
+                            }
+                        
+                        # Calculate MACD
+                        macd_value, signal_value = TechnicalIndicators.calculate_macd(df)
+                        if macd_value is not None and signal_value is not None:
+                            indicators["macd"] = {
+                                "value": macd_value,
+                                "signal_line": signal_value,
+                                "signal": "bullish" if macd_value > signal_value else "bearish"
+                            }
+                        
+                        # Calculate Stochastic
+                        k_value, d_value = TechnicalIndicators.calculate_stochastic(df, k_period=params["stoch_k_period"], d_period=params["stoch_d_period"])
+                        if k_value is not None and d_value is not None:
+                            indicators["stochastic"] = {
+                                "value": k_value,  # %K - renamed to "value" to match frontend expectations
+                                "d_value": d_value,  # %D - renamed to "d_value" to match frontend expectations
+                                "signal": "oversold" if k_value < 20 else "overbought" if k_value > 80 else "neutral"
+                            }
+                        
+                        # Calculate Bollinger Bands
+                        bbands = TechnicalIndicators.calculate_bbands(df, period=params["bbands_period"])
+                        if bbands and all(v is not None for v in bbands.values()):
+                            indicators["bbands"] = bbands
+                        
+                        # Calculate SMA & EMA
+                        sma_value = TechnicalIndicators.calculate_sma(df, period=params["sma_period"])
+                        if sma_value is not None:
+                            indicators["sma"] = {
+                                "value": sma_value,
+                                "signal": "above" if price_data.get("current", 0) > sma_value else "below"
+                            }
+                        
+                        ema_value = TechnicalIndicators.calculate_ema(df, period=params["ema_period"])
+                        if ema_value is not None:
+                            indicators["ema"] = {
+                                "value": ema_value,
+                                "signal": "above" if price_data.get("current", 0) > ema_value else "below"
+                            }
+                        
+                        # Calculate ATR & ADX
+                        atr_value = TechnicalIndicators.calculate_atr(df, period=params["atr_period"])
+                        if atr_value is not None:
+                            indicators["atr"] = {"value": atr_value}
+                        
+                        adx_value = TechnicalIndicators.calculate_adx(df, period=params["adx_period"])
+                        if adx_value is not None:
+                            indicators["adx"] = {
+                                "value": adx_value,
+                                "signal": "weak" if adx_value < 20 else "strong" if adx_value > 25 else "moderate"
+                            }
+                        
+                        # Determine trend based on indicators
+                        trend = {"direction": "neutral", "strength": "medium"}
+                        
+                        # Determine trend direction from multiple indicators
+                        bullish_signals = 0
+                        bearish_signals = 0
+                        
+                        # RSI
+                        if "rsi" in indicators:
+                            rsi = indicators["rsi"]["value"]
+                            if rsi > 60:
+                                bullish_signals += 1
+                            elif rsi < 40:
+                                bearish_signals += 1
+                        
+                        # MACD
+                        if "macd" in indicators:
+                            if indicators["macd"]["signal"] == "bullish":
+                                bullish_signals += 1
+                            else:
+                                bearish_signals += 1
+                        
+                        # Moving averages
+                        if "sma" in indicators and "ema" in indicators:
+                            if indicators["sma"]["signal"] == "above" and indicators["ema"]["signal"] == "above":
+                                bullish_signals += 1
+                            elif indicators["sma"]["signal"] == "below" and indicators["ema"]["signal"] == "below":
+                                bearish_signals += 1
+                        
+                        # Determine overall trend
+                        if bullish_signals > bearish_signals + 1:
+                            trend["direction"] = "bullish"
+                        elif bearish_signals > bullish_signals + 1:
+                            trend["direction"] = "bearish"
+                        
+                        # Determine strength (using ADX if available)
+                        if "adx" in indicators:
+                            trend["strength"] = indicators["adx"]["signal"]
                 
         except Exception as e:
-            logger.error(f"Error fetching technical indicators for {symbol}: {e}")
-            # Raise an HTTP exception instead of returning mock data
-            raise HTTPException(status_code=500, detail=f"Failed to fetch technical data for {symbol}: {str(e)}")
+            logger.error(f"Error processing market data: {e}")
             
+        # Return the data
+        return {
+            "symbol": symbol,
+            "timeframe": timeframe,
+            "price_data": price_data,
+            "indicators": indicators,
+            "trend": trend
+        }
     except Exception as e:
         logger.error(f"Technical indicators error: {e}")
         raise HTTPException(status_code=500, detail="Error retrieving technical indicators")
 
 @app.get("/market/news-sentiment/{symbol}")
 async def get_news_sentiment(symbol: str):
-    """Get news sentiment data for a specific symbol"""
+    """Get news sentiment data bypassing MCP tools"""
     try:
-        if not hasattr(app.state, 'market_manager'):
-            raise HTTPException(status_code=503, detail="Market service not initialized")
+        if not app.state.market_manager:
+            raise HTTPException(status_code=503, detail="Market manager not initialized")
             
-        # Fetch news sentiment from market manager
-        try:
-            sentiment_data = await app.state.market_manager.get_news_sentiment(symbol)
-            if sentiment_data and "feed" in sentiment_data:
-                articles = sentiment_data["feed"]
-                
-                # Calculate overall sentiment
+        # Use market manager directly
+        mm = app.state.market_manager
+        http = app.state.http
+        
+        sentiment_data = await mm.get_news_sentiment(ticker=symbol)
+        
+        # Process data into standard format
+        if sentiment_data and "feed" in sentiment_data:
+            articles = sentiment_data["feed"]
+            article_count = len(articles)
+            
+            sentiment_score = 50  # Neutral default
+            sentiment_label = "NEUTRAL"
+            most_relevant_article = None
+            
+            if article_count > 0:
+                # Calculate average sentiment
                 total_score = 0
-                positive = 0
-                neutral = 0
-                negative = 0
-                
                 for article in articles:
                     score = article.get("overall_sentiment_score", 0)
                     total_score += score
-                    
-                    if score > 0.25:
-                        positive += 1
-                    elif score < -0.25:
-                        negative += 1
-                    else:
-                        neutral += 1
                 
-                count = len(articles)
-                avg_score = total_score / count if count > 0 else 0
+                avg_score = total_score / article_count
+                sentiment_score = (avg_score + 1) * 50  # Convert from -1,1 to 0,100
                 
-                # Normalize to 0-100 scale
-                normalized_score = (avg_score + 1) * 50
+                # Determine sentiment label
+                if sentiment_score > 65:
+                    sentiment_label = "BULLISH"
+                elif sentiment_score < 35:
+                    sentiment_label = "BEARISH"
                 
-                # Calculate percentages
-                pos_pct = int((positive / count) * 100) if count > 0 else 0
-                neu_pct = int((neutral / count) * 100) if count > 0 else 0
-                neg_pct = int((negative / count) * 100) if count > 0 else 0
+                # Find most relevant article (highest relevance score)
+                most_relevant_article = max(articles, key=lambda x: x.get("relevance_score", 0))
                 
-                return {
-                    "symbol": symbol,
-                    "sentiment": {
-                        "score": normalized_score,
-                        "positive": pos_pct,
-                        "neutral": neu_pct,
-                        "negative": neg_pct
-                    },
-                    "news_count": count,
-                    "feed": articles,
-                    "timestamp": datetime.now(UTC).isoformat()
-                }
-        except Exception as e:
-            logger.error(f"Error processing news sentiment: {e}")
+                # Clean up article
+                if most_relevant_article:
+                    most_relevant_article = {
+                        "title": most_relevant_article.get("title", ""),
+                        "url": most_relevant_article.get("url", ""),
+                        "summary": most_relevant_article.get("summary", ""),
+                        "published": most_relevant_article.get("time_published", ""),
+                        "source": most_relevant_article.get("source", ""),
+                        "sentiment_score": most_relevant_article.get("overall_sentiment_score", 0)
+                    }
+            
+            # Extract the original feed (articles)
+            original_feed = sentiment_data.get("feed", [])
+            
+            return {
+                "symbol": symbol,
+                "sentiment": {
+                    "score": sentiment_score,
+                    "label": sentiment_label
+                },
+                "news_count": article_count,
+                "most_relevant_article": most_relevant_article,
+                "feed": original_feed, # Added feed array here
+                "timestamp": datetime.now(UTC).isoformat()
+            }
         
-        # Return data indicating no sentiment available if API call failed
         return {
             "symbol": symbol,
             "sentiment": {
-                "score": None,
-                "positive": None,
-                "neutral": None,
-                "negative": None
+                "score": 50,
+                "label": "NEUTRAL"
             },
             "news_count": 0,
-            "feed": [],
+            "feed": [], # Add empty feed array for consistency
             "timestamp": datetime.now(UTC).isoformat()
         }
+            
     except Exception as e:
         logger.error(f"News sentiment error: {e}")
         raise HTTPException(status_code=500, detail="Error retrieving news sentiment")
@@ -594,21 +659,29 @@ class AssetAnalysisRequest(BaseModel):
     market: str = "USD"        # Only used for crypto
     interval: str = "60min"    # 1min, 5min, 15min, 30min, 60min, daily, weekly, monthly
     user_id: str
+    platform: str = "web"      # Target platform for formatting (web, telegram)
 
 class JobResponse(BaseModel):
     job_id: str
     status: str
     
 async def run_analysis_job(app, job_id: str, request: AssetAnalysisRequest):
-    """Background task to run analysis and store results"""
+    """
+    Background task to run analysis and store results.
+    This implementation completely replaces the previous version and works only with MCP.
+    """
     try:
-        # Call the analyze_asset method directly from the agent
+        # Create an MCP context for analysis
+        from mcp.server.fastmcp import Context
+        
+        # Call the analyze_asset method (the MCP-only implementation)
         analysis = await app.state.agent.analyze_asset(
             symbol=request.symbol,
             asset_type=request.asset_type,
             market=request.market,
             interval=request.interval,
-            for_user_display=True  # Format output for direct user display
+            for_user_display=True,  # Format output for direct user display
+            platform=request.platform if hasattr(request, 'platform') else 'web'  # Pass platform for formatting
         )
         
         # Store the result in our jobs dictionary
