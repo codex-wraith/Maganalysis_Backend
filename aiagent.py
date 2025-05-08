@@ -210,32 +210,31 @@ class CipherAgent:
                 await self.message_memory.add_response(platform, user_id, restricted_message)
                 return restricted_message
             
-            # Create a list of messages for the LLM
-            messages_for_llm = []
-            
-            # Add system prompts
-            messages_for_llm.append({"role": "system", "content": self.base_system_prompt})
-            
-            # Add platform-specific context using the agent's PromptManager
+            # --- Prepare System Prompt ---
+            system_prompts_content = []  # List to hold all system instruction strings
+
+            # Add base system prompt content
+            system_prompts_content.append(self.base_system_prompt)
+
+            # Add platform-specific context content
             platform_key = platform or "web"
             try:
-                # Use the prompt_manager instead of mcp.prompts
                 platform_context = self.prompt_manager.get_system_prompt(platform_key)
                 if platform_context:
-                    messages_for_llm.append({"role": "system", "content": platform_context})
+                    system_prompts_content.append(platform_context)
                 else:
                     logger.warning(f"No system prompt template found for platform key: {platform_key}")
             except Exception as e:
                 logger.warning(f"Could not get platform context for {platform_key} using PromptManager: {e}", exc_info=True)
             
-            # Get conversation history
+            # Get conversation history (needed for both system prompt and messages list)
             conversation_history = await self.message_memory.get_conversation_history(
                 platform=platform or "web", 
                 user_id=user_id or "anonymous",
                 limit=15  # Include more history for better context
             )
             
-            # Add conversation break if it's been a while since last message
+            # Add conversation break content (as system instruction)
             if conversation_history:
                 last_message_time = conversation_history[-1].get('timestamp')
                 if last_message_time:
@@ -254,23 +253,16 @@ class CipherAgent:
                             # Use prompt_manager to get conversation break prompt
                             session_break = self.prompt_manager.get_conversation_break("new_session")
                             if session_break:
-                                messages_for_llm.append({"role": "system", "content": session_break})
+                                system_prompts_content.append(session_break)
                         except Exception as e:
                             logger.warning(f"Could not get conversation break prompt: {e}", exc_info=True)
             
-            # Get formatted conversation history
+            # Add formatted conversation history (as system instruction)
             formatted_history = await self._format_conversation_history(conversation_history)
             if formatted_history:
-                messages_for_llm.append({"role": "system", "content": formatted_history})
+                system_prompts_content.append(formatted_history)
             
-            # Add conversation history
-            for msg in conversation_history:
-                role = "assistant" if msg.get('is_response') else "user"
-                content = msg.get('text', '')
-                if content:  # Skip empty messages
-                    messages_for_llm.append({"role": role, "content": content})
-            
-            # Detect analysis requests
+            # Add market analysis context content (as system instruction)
             is_analysis_request = self._is_analysis_request(text)
             if is_analysis_request:
                 # Extract symbol and timeframe
@@ -281,23 +273,35 @@ class CipherAgent:
                     # Detect asset type
                     asset_type = self._determine_asset_type(symbol)
                     
-                    # Enhance context with market data using the updated function
+                    # Get market analysis as string
                     try:
-                        # Use the updated add_market_analysis_to_context function with the new messages_list argument
                         from market.mcp_tools import add_market_analysis_to_context
                         
-                        # This will add the market analysis directly to the messages_for_llm list
-                        await add_market_analysis_to_context(
-                            self, 
-                            messages_list=messages_for_llm, 
-                            symbol=symbol, 
-                            asset_type=asset_type, 
+                        # Call WITHOUT messages_list to get the string content
+                        market_analysis_context_str = await add_market_analysis_to_context(
+                            self,
+                            symbol=symbol,
+                            asset_type=asset_type,
                             timeframe=timeframe or "daily"
+                            # messages_list is omitted here
                         )
+                        if market_analysis_context_str:
+                            system_prompts_content.append(market_analysis_context_str)
                     except Exception as e:
                         logger.error(f"Error adding market analysis context: {e}", exc_info=True)
-                        # Add error context to inform model
-                        messages_for_llm.append({"role": "system", "content": f"Note: Market data for {symbol} could not be retrieved. Error: {str(e)}"})
+                        system_prompts_content.append(f"Note: Market data for {symbol} could not be retrieved. Error: {str(e)}")
+            
+            # Combine all system instructions into a single string
+            final_system_prompt = "\n\n".join(system_prompts_content)
+            
+            # --- Prepare Messages List (User/Assistant roles ONLY) ---
+            messages_for_llm = []
+            for msg in conversation_history:
+                role = "assistant" if msg.get('is_response') else "user"
+                content = msg.get('text', '')
+                # Skip system messages that might have been stored incorrectly before
+                if content and role in ["user", "assistant"]:
+                    messages_for_llm.append({"role": role, "content": content})
             
             # Add the current message
             messages_for_llm.append({"role": "user", "content": text})
@@ -312,13 +316,20 @@ class CipherAgent:
             # Set max tokens with context override if provided
             max_tokens = context.get("max_tokens", self.settings.MAX_TOKENS)
             
-            # Generate response using the initialized Anthropic client
-            response = await self.anthropic_client.messages.create(
-                messages=messages_for_llm,
-                model=model_to_use,
-                max_tokens=max_tokens,
-                temperature=self.settings.TEMPERATURE
-            )
+            # Generate response using the initialized Anthropic client with correct structure
+            try:
+                response = await self.anthropic_client.messages.create(
+                    messages=messages_for_llm,    # ONLY user/assistant messages
+                    system=final_system_prompt,   # Pass system instructions here
+                    model=model_to_use,
+                    max_tokens=max_tokens,
+                    temperature=self.settings.TEMPERATURE
+                )
+            except Exception as api_error:
+                # Log the specific API error
+                logger.error(f"Anthropic API call failed: {api_error}", exc_info=True)
+                # Re-raise to be caught by the outer try-except
+                raise api_error
             
             # Extract and process the response text based on Anthropic's response structure
             response_text = ""
@@ -344,10 +355,14 @@ class CipherAgent:
             
         except Exception as e:
             error_id = f"err-{os.urandom(4).hex()}"
-            logger.error(f"Error ID {error_id} in respond: {e}", exc_info=True)
             
-            # Return user-friendly error
-            error_response = f"I encountered a technical issue (Error ID: {error_id}). Please try again in a moment."
+            # Check if it's a specific Anthropic API error about unexpected role
+            if isinstance(e, Exception) and "Unexpected role \"system\"" in str(e):
+                logger.error(f"Error ID {error_id} in respond (Anthropic Message Format Error): {e}", exc_info=True)
+                error_response = f"I encountered an issue with the message format (Error ID: {error_id}). Please try again."
+            else:
+                logger.error(f"Error ID {error_id} in respond: {e}", exc_info=True)
+                error_response = f"I encountered a technical issue (Error ID: {error_id}). Please try again in a moment."
             
             # Store error in memory
             await self.message_memory.add_response(
@@ -476,8 +491,8 @@ class CipherAgent:
             A string containing the analysis
         """
         try:
-            # Create a list of messages for the LLM
-            messages_for_llm = []
+            # --- Prepare System Prompt ---
+            system_prompts_content = []  # List to hold all system instruction strings
             
             # Get market analysis template from PromptManager
             market_analysis_template = self.prompt_manager.get_template_section('market_analysis_template')
@@ -489,7 +504,7 @@ class CipherAgent:
                 # Fallback to a basic template if not found
                 analysis_prompt = "Analyze this asset based on technical indicators, price levels, and market sentiment."
                 
-            messages_for_llm.append({"role": "system", "content": analysis_prompt})
+            system_prompts_content.append(analysis_prompt)
             
             # Import tools needed for analysis
             from market.mcp_tools import get_technical_indicators, get_news_sentiment
@@ -553,7 +568,7 @@ class CipherAgent:
                 """
             
             # Add the data-driven MTF context
-            messages_for_llm.append({"role": "system", "content": mtf_context})
+            system_prompts_content.append(mtf_context)
             
             # Gather technical analysis data
             tech_data = await get_technical_indicators(symbol, asset_type, interval)
@@ -594,19 +609,32 @@ class CipherAgent:
             6. Clear trading bias (bullish, bearish, or neutral)
             """
             
-            messages_for_llm.append({"role": "system", "content": analysis_context})
+            system_prompts_content.append(analysis_context)
+            
+            # Combine all system instructions into a single string
+            final_system_prompt = "\n\n".join(system_prompts_content)
+            
+            # --- Prepare Messages List (User/Assistant roles ONLY) ---
+            messages_for_llm = []
             
             # Add user message requesting analysis
             user_message = f"Please analyze {symbol} on the {interval} timeframe and provide trading insights."
             messages_for_llm.append({"role": "user", "content": user_message})
             
-            # Generate the analysis using Anthropic client
-            response = await self.anthropic_client.messages.create(
-                messages=messages_for_llm,
-                model=self.settings.SOCIAL_MODEL,
-                max_tokens=4000,
-                temperature=0
-            )
+            # Generate the analysis using Anthropic client with correct structure
+            try:
+                response = await self.anthropic_client.messages.create(
+                    messages=messages_for_llm,      # ONLY user message
+                    system=final_system_prompt,     # Pass system instructions here
+                    model=self.settings.SOCIAL_MODEL,
+                    max_tokens=4000,
+                    temperature=0
+                )
+            except Exception as api_error:
+                # Log the specific API error
+                logger.error(f"Anthropic API call failed in analyze_asset: {api_error}", exc_info=True)
+                # Re-raise to be caught by the outer try-except
+                raise api_error
             
             # Extract the analysis text from Anthropic's response structure
             analysis = ""
@@ -678,8 +706,14 @@ class CipherAgent:
             
         except Exception as e:
             error_id = f"err-{os.urandom(4).hex()}"
-            logger.error(f"Error ID {error_id} in analyze_asset: {e}", exc_info=True)
-            return f"I encountered an error analyzing {symbol} (Error ID: {error_id}). Please try again later."
+            
+            # Check if it's a specific Anthropic API error about unexpected role
+            if isinstance(e, Exception) and "Unexpected role \"system\"" in str(e):
+                logger.error(f"Error ID {error_id} in analyze_asset (Anthropic Message Format Error): {e}", exc_info=True)
+                return f"I encountered an issue with the message format while analyzing {symbol} (Error ID: {error_id}). Please try again."
+            else:
+                logger.error(f"Error ID {error_id} in analyze_asset: {e}", exc_info=True)
+                return f"I encountered an error analyzing {symbol} (Error ID: {error_id}). Please try again later."
     
     # Helper methods
     
