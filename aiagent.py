@@ -689,11 +689,12 @@ class CipherAgent:
                 ⚡️⚡️⚡️⚡️⚡️⚡️⚡️⚡️⚡️⚡️⚡️⚡️⚡️⚡️⚡️⚡️
                 """
                 
-                # Process the formatted analysis through MCPMessageProcessor
+                # Process the formatted analysis through MessageProcessor
+                from utils.message_handling import MessageProcessor
                 from utils.mcp_message_handling import MCPMessageProcessor
                 
                 # Clean the message for standard formatting
-                cleaned_analysis = MCPMessageProcessor.clean_message(formatted_analysis)
+                cleaned_analysis = MessageProcessor.clean_message(formatted_analysis)
                 
                 # Format specifically for the platform if platform is provided
                 if 'platform' in locals() or 'platform' in globals():

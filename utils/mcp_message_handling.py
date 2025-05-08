@@ -105,7 +105,8 @@ class MCPMessageProcessor:
     @staticmethod
     def split_message(text: str, max_chunk_size: int = 4096) -> List[str]:
         """Split a message into chunks of max_chunk_size."""
-        return MessageProcessor.split_message(text, max_chunk_size)
+        processor = MessageProcessor(max_chunk_size=max_chunk_size)
+        return processor.split_message(text)
         
     @staticmethod
     def format_for_telegram(text: str) -> str:
