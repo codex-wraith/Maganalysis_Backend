@@ -7,7 +7,6 @@ from market.data_processor import MarketDataProcessor
 from market.formatters import DataFormatter
 from datetime import datetime, UTC
 from mcp.server.fastmcp.exceptions import ToolError
-from mcp_server import mcp
 
 # Import tools we need directly
 from market.mcp_tools import get_technical_indicators, get_raw_market_data
@@ -36,8 +35,7 @@ def init_global_dependencies():
             logger.error(f"Failed to initialize global dependencies: {e}")
             # Will use parameters passed to register_market_tools instead
 
-# Module-level MCP tool definitions
-@mcp.tool()
+# Module-level function definitions
 async def get_price_levels(symbol: str, asset_type: str = "stock", timeframe: str = "daily"):
     """
     Get support and resistance levels for a symbol across multiple timeframes.
@@ -178,7 +176,6 @@ async def get_price_levels(symbol: str, asset_type: str = "stock", timeframe: st
         logger.error(f"Error getting price levels for {symbol}: {e}")
         raise ToolError(f"Failed to calculate price levels: {str(e)}")
 
-@mcp.tool()
 async def get_key_price_zones(symbol: str, asset_type: str = "stock", timeframe: str = "daily"):
     """
     Get only the most important price zones for a symbol, focusing on high confidence levels.
@@ -224,11 +221,11 @@ async def get_key_price_zones(symbol: str, asset_type: str = "stock", timeframe:
         logger.error(f"Error getting key price zones for {symbol}: {e}")
         raise ToolError(f"Failed to identify key price zones: {str(e)}")
 
-# Registration function now just stores references to app dependencies
+# Registration function registers module-level functions with MCP
 def register_price_level_tools(mcp_instance, app_instance, market_manager_instance, http_session_instance, agent_instance):
     """
     Register price level tools with the MCP server.
-    This function now primarily stores references to app dependencies for use by the module-level functions.
+    This function stores references to app dependencies and registers module-level functions with MCP.
     """
     global market_manager, http_session
     
@@ -236,4 +233,8 @@ def register_price_level_tools(mcp_instance, app_instance, market_manager_instan
     market_manager = market_manager_instance
     http_session = http_session_instance
     
-    logger.info("Price level tools registered (now defined at module level)")
+    # Register the module-level functions as MCP tools
+    mcp_instance.tool()(get_price_levels)
+    mcp_instance.tool()(get_key_price_zones)
+    
+    logger.info("Price level tools registered from module-level functions")

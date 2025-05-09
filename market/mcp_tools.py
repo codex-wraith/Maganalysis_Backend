@@ -12,11 +12,8 @@ from datetime import datetime, UTC
 
 logger = logging.getLogger(__name__)
 
-# Module-level MCP tool definitions
+# Module-level function definitions 
 # These functions are available for direct import and for MCP registration
-
-# We'll use these later but can't import directly due to circular imports
-# app and get_app will be imported only when needed
 
 # Global variables for accessing app state
 market_manager = None
@@ -38,8 +35,7 @@ def init_global_dependencies():
             logger.error(f"Failed to initialize global dependencies: {e}")
             # Will use parameters passed to register_market_tools instead
 
-# Define the tool functions at module level
-@mcp.tool()
+# Define the functions at module level (without decorators)
 async def get_raw_market_data(symbol: str, asset_type: str = "stock", timeframe: str = "daily"):
     """
     Get raw market data for a symbol.
@@ -126,7 +122,6 @@ async def get_raw_market_data(symbol: str, asset_type: str = "stock", timeframe:
         logger.error(f"Error getting market data for {symbol}: {e}")
         raise ToolError(f"Failed to get market data: {str(e)}")
 
-@mcp.tool()
 async def get_market_data(symbol: str, asset_type: str = "stock", timeframe: str = "daily"):
     """
     Get market data for a symbol.
@@ -141,7 +136,6 @@ async def get_market_data(symbol: str, asset_type: str = "stock", timeframe: str
     """
     return await get_raw_market_data(symbol, asset_type, timeframe)
 
-@mcp.tool()
 async def get_technical_indicators(symbol: str, asset_type: str = "stock", timeframe: str = "daily"):
     """
     Calculate technical indicators for a stock or crypto.
@@ -267,7 +261,6 @@ async def get_technical_indicators(symbol: str, asset_type: str = "stock", timef
         logger.error(f"Error calculating technical indicators for {symbol}: {e}")
         raise ToolError(f"Failed to calculate technical indicators: {str(e)}")
 
-@mcp.tool()
 async def get_news_sentiment(symbol: str):
     """
     Get news sentiment data for a specific symbol.
@@ -385,7 +378,6 @@ async def get_news_sentiment(symbol: str):
         "feed": []
     }
 
-@mcp.tool()
 async def search_market_information(query: str, search_type: str = "web"):
     """
     Search for market information using the Tavily API.
@@ -461,11 +453,11 @@ async def search_market_information(query: str, search_type: str = "web"):
         logger.error(f"Error in search_market_information: {str(e)}")
         raise ToolError(f"Search failed: {str(e)}")
 
-# Registration function now just stores references to app dependencies
+# Registration function now registers the module-level functions with MCP
 def register_market_tools(mcp_instance, app_instance, market_manager_instance, http_session_instance, agent_instance):
     """
     Register market tools with the MCP server.
-    This function now primarily stores references to app dependencies for use by the module-level functions.
+    This function stores references to app dependencies and registers the module-level functions with MCP.
     """
     global market_manager, http_session
     
@@ -473,7 +465,14 @@ def register_market_tools(mcp_instance, app_instance, market_manager_instance, h
     market_manager = market_manager_instance
     http_session = http_session_instance
     
-    logger.info("Market tools registered (now defined at module level)")
+    # Register the module-level functions as MCP tools
+    mcp_instance.tool()(get_raw_market_data)
+    mcp_instance.tool()(get_market_data)
+    mcp_instance.tool()(get_technical_indicators)
+    mcp_instance.tool()(get_news_sentiment)
+    mcp_instance.tool()(search_market_information)
+    
+    logger.info("Market tools registered from module-level functions")
     
     # Nothing else to do since tools are decorated at module level
 

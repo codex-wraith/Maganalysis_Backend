@@ -5,7 +5,6 @@ from typing import Dict, Any, List, Optional
 from market.price_levels import PriceLevelAnalyzer, LevelType
 from datetime import datetime, UTC
 from mcp.server.fastmcp.exceptions import ToolError
-from mcp_server import mcp
 
 # Import tools we need directly
 from market.mcp_tools import get_technical_indicators, get_news_sentiment
@@ -35,8 +34,7 @@ def init_global_dependencies():
             logger.error(f"Failed to initialize global dependencies: {e}")
             # Will use parameters passed to register_market_tools instead
 
-# Define the tool at module level
-@mcp.tool()
+# Define the function at module level
 async def analyze_multi_timeframe(symbol: str, asset_type: str = "stock", primary_timeframe: str = "daily"):
     """
     Perform multi-timeframe analysis for a symbol.
@@ -148,8 +146,7 @@ async def analyze_multi_timeframe(symbol: str, asset_type: str = "stock", primar
         logger.error(f"Error in multi-timeframe analysis: {e}")
         raise ToolError(f"Failed to analyze multi-timeframe data: {str(e)}")
 
-# Create an MCP prompt template specifically for multi-timeframe analysis
-@mcp.prompt("mtf_analysis")
+# Create a prompt template for multi-timeframe analysis (will be registered with MCP later)
 def mtf_analysis_prompt():
     """System prompt for multi-timeframe analysis."""
     return """
@@ -174,11 +171,11 @@ def mtf_analysis_prompt():
     Keep your analysis data-driven, balanced, and focus on helping traders see the complete multi-timeframe picture.
     """
 
-# Registration function now just stores references to app dependencies
+# Registration function registers module-level functions with MCP
 def register_multi_timeframe_tools(mcp_instance, app_instance, market_manager_instance, http_session_instance, agent_instance):
     """
     Register multi-timeframe tools with the MCP server.
-    This function now primarily stores references to app dependencies for use by the module-level functions.
+    This function stores references to app dependencies and registers module-level functions with MCP.
     """
     global market_manager, http_session
     
@@ -186,4 +183,10 @@ def register_multi_timeframe_tools(mcp_instance, app_instance, market_manager_in
     market_manager = market_manager_instance
     http_session = http_session_instance
     
-    logger.info("Multi-timeframe tools registered (now defined at module level)")
+    # Register the module-level functions as MCP tools
+    mcp_instance.tool()(analyze_multi_timeframe)
+    
+    # Register the prompt template
+    mcp_instance.prompt("mtf_analysis")(mtf_analysis_prompt)
+    
+    logger.info("Multi-timeframe tools registered from module-level functions")

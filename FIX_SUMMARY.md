@@ -34,12 +34,13 @@ This occurred because of interdependencies between main.py, mcp_server.py, and t
 
 ## Solution
 
-Our final solution involved:
+After several iterations, our final solution involved:
 
-1. **Moving tool function definitions to module level**: 
-   - Moved the tool function implementations from inside registration functions to module level
-   - Kept the MCP decorators (`@mcp.tool()`) to register them with MCP
+1. **Moving function definitions to module level without decorators**: 
+   - Moved function implementations from inside registration functions to module level
+   - Removed `@mcp.tool()` decorators from the module level to avoid import cycles
    - Added direct imports for dependencies between module files
+   - Registered functions with MCP inside registration functions
 
 2. **Creating a global app access mechanism**:
    - Added `get_app()` function to main.py
@@ -48,14 +49,15 @@ Our final solution involved:
 
 3. **Using direct function calls in aiagent.py**:
    - Imported functions directly from their module files
-   - Changed all calls to use direct function calls instead of `mcp.tools.<tool_name>()`
+   - Changed all calls to use direct function calls
    - Added proper parameter names for clarity
 
 4. **Resolving circular import issues**:
-   - Removed direct imports of `app` and `get_app` from module files
+   - Removed direct imports of `mcp`, `app` and `get_app` from module files
    - Added dynamic imports inside functions where needed
    - Used import aliases (`import app as main_app`) to avoid conflicts
    - Replaced global references with function-scoped imports
+   - Moved all MCP-related imports to registration functions
 
 ## Files Modified
 
@@ -91,14 +93,14 @@ Our final solution involved:
 
 The strategy we implemented ensures that:
 
-1. MCP tools are still properly registered with MCP via decorators
-2. Functions are available for direct import and calling as regular Python functions
+1. MCP tools are still properly registered with MCP inside registration functions
+2. Functions are available for direct import and calling as regular Python functions without MCP dependencies
 3. App state dependencies are accessible to module-level functions
 4. Code maintains its original functionality but with a different invocation pattern
-5. Registration functions still exist but are simplified to just store dependencies
-6. Circular import issues are resolved by using dynamic imports where needed
+5. Registration functions now handle both dependency storage and MCP registration
+6. Circular import issues are resolved by moving all MCP-related imports to registration functions
 
-This approach provides the best of both worlds: MCP registration for external tool access, and direct function calling for internal use, while avoiding import issues.
+This approach provides the best of both worlds: MCP registration for external tool access, and direct function calling for internal use, while completely avoiding import cycles.
 
 ## Testing
 
