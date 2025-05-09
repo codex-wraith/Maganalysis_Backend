@@ -335,10 +335,10 @@ async def get_historical_data(symbol: str, timeframe: str = "1d"):
     try:
         if not app.state.market_manager:
             raise HTTPException(status_code=503, detail="Market manager not initialized")
-            
+
         mm = app.state.market_manager
         http = app.state.http
-        
+
         # Map frontend timeframe to backend interval
         interval_map = {
             "1d": "daily",
@@ -347,21 +347,33 @@ async def get_historical_data(symbol: str, timeframe: str = "1d"):
             "5m": "5min",
             "1m": "1min"
         }
-        
+
         interval = interval_map.get(timeframe, "daily")
-        
+
         # Determine if this is a stock or crypto
         asset_type = "stock"
         if symbol.upper() in ["BTC", "ETH", "XRP", "LTC", "ADA", "DOGE", "USDT", "BNB"]:
             asset_type = "crypto"
-            
+
         try:
             if asset_type == "stock":
-                data = await mm.get_time_series_daily(symbol)
-                return data
+                if timeframe == "1d":
+                    # Use intraday data for the "1d" timeframe to get actual intraday price movements
+                    # "15min" interval with "full" outputsize provides more data points for the day
+                    data = await mm.get_intraday_data(symbol, interval="15min", outputsize="full")
+                    return data
+                else:
+                    # For other timeframes, use the appropriate time series data
+                    data = await mm.get_time_series_daily(symbol)
+                    return data
             else:
-                data = await mm.get_crypto_daily(symbol, "USD")
-                return data
+                if timeframe == "1d":
+                    # Use intraday data for crypto as well when "1d" is requested
+                    data = await mm.get_crypto_intraday(symbol, market="USD", interval="15min", outputsize="full")
+                    return data
+                else:
+                    data = await mm.get_crypto_daily(symbol, "USD")
+                    return data
         except Exception as e:
             logger.error(f"Error processing market data: {e}")
             raise HTTPException(status_code=500, detail="Error processing market data")
