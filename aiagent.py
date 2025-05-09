@@ -1033,21 +1033,21 @@ class CipherAgent:
 
             # Build technical indicators text
             tech_indicators_list = [
-                f"- Current Price: ${current_price:.2f if current_price is not None and isinstance(current_price, (int, float)) else 'N/A'} ({change_direction or '-'} {price_change_pct:.2f if price_change_pct is not None and isinstance(price_change_pct, (int, float)) else 'N/A'}%)",
-                f"- Trend: {trend} with {trend_strength.upper()} momentum (ADX: {latest_adx:.2f if latest_adx is not None else 'N/A'})",
-                f"- Moving Averages: Price trading {price_vs_ma} {sma_period}-day SMA (${latest_sma:.2f if latest_sma is not None else 'N/A'})",
-                f"- EMA {ema_period}-day: ${latest_ema:.2f if latest_ema is not None else 'N/A'} trending {macd_trend.lower()}"
+                f"- Current Price: ${f'{current_price:.2f}' if current_price is not None and isinstance(current_price, (int, float)) else 'N/A'} ({change_direction or '-'} {f'{price_change_pct:.2f}' if price_change_pct is not None and isinstance(price_change_pct, (int, float)) else 'N/A'}%)",
+                f"- Trend: {trend} with {trend_strength.upper()} momentum (ADX: {f'{latest_adx:.2f}' if latest_adx is not None and isinstance(latest_adx, (int, float)) else 'N/A'})",
+                f"- Moving Averages: Price trading {price_vs_ma} {sma_period}-day SMA (${f'{latest_sma:.2f}' if latest_sma is not None and isinstance(latest_sma, (int, float)) else 'N/A'})",
+                f"- EMA {ema_period}-day: ${f'{latest_ema:.2f}' if latest_ema is not None and isinstance(latest_ema, (int, float)) else 'N/A'} trending {macd_trend.lower()}"
             ]
 
             if not is_extended and vwap_value is not None:
-                tech_indicators_list.append(f"- VWAP: ${vwap_value:.2f if vwap_value is not None else 'N/A'} - Critical volume-weighted price level")
+                tech_indicators_list.append(f"- VWAP: ${f'{vwap_value:.2f}' if vwap_value is not None and isinstance(vwap_value, (int, float)) else 'N/A'} - Critical volume-weighted price level")
 
             tech_indicators_list.extend([
-                f"- RSI: {latest_rsi:.2f if latest_rsi is not None else 'N/A'} ({rsi_interpretation})",
-                f"- MACD: {macd_value:.2f if macd_value is not None else 'N/A'} vs Signal {signal_value:.2f if signal_value is not None else 'N/A'} - {macd_interpretation}",
+                f"- RSI: {f'{latest_rsi:.2f}' if latest_rsi is not None and isinstance(latest_rsi, (int, float)) else 'N/A'} ({rsi_interpretation})",
+                f"- MACD: {f'{macd_value:.2f}' if macd_value is not None and isinstance(macd_value, (int, float)) else 'N/A'} vs Signal {f'{signal_value:.2f}' if signal_value is not None and isinstance(signal_value, (int, float)) else 'N/A'} - {macd_interpretation}",
                 f"- Bollinger Bands: Price is {bbands_status}",
-                f"- ATR: ${latest_atr:.2f if latest_atr is not None else 'N/A'} ({atr_pct:.2f if atr_pct is not None else 'N/A'}% of price) - {atr_interpretation}",
-                f"- Stochastic: {k_value:.2f if k_value is not None else 'N/A'}/{d_value:.2f if d_value is not None else 'N/A'} - {stoch_interpretation}",
+                f"- ATR: ${f'{latest_atr:.2f}' if latest_atr is not None and isinstance(latest_atr, (int, float)) else 'N/A'} ({f'{atr_pct:.2f}' if atr_pct is not None and isinstance(atr_pct, (int, float)) else 'N/A'}% of price) - {atr_interpretation}",
+                f"- Stochastic: {f'{k_value:.2f}' if k_value is not None and isinstance(k_value, (int, float)) else 'N/A'}/{f'{d_value:.2f}' if d_value is not None and isinstance(d_value, (int, float)) else 'N/A'} - {stoch_interpretation}",
                 f"- Volume Analysis: {vol_comment}",
                 f"- Technical Signal: {signal}"
             ])
@@ -1615,11 +1615,11 @@ class CipherAgent:
                     }
 
                     # Calculate Bollinger Bands
-                    upper, middle, lower = TechnicalIndicators.calculate_bollinger_bands(df)
+                    bbands_data = TechnicalIndicators.calculate_bbands(df)
                     indicators["bbands"] = {
-                        "upper": float(upper.iloc[0]) if isinstance(upper, pd.Series) and not upper.empty and not pd.isna(upper.iloc[0]) else upper if isinstance(upper, (int, float)) else None,
-                        "middle": float(middle.iloc[0]) if isinstance(middle, pd.Series) and not middle.empty and not pd.isna(middle.iloc[0]) else middle if isinstance(middle, (int, float)) else None,
-                        "lower": float(lower.iloc[0]) if isinstance(lower, pd.Series) and not lower.empty and not pd.isna(lower.iloc[0]) else lower if isinstance(lower, (int, float)) else None
+                        "upper": bbands_data.get("upper"),
+                        "middle": bbands_data.get("middle"),
+                        "lower": bbands_data.get("lower")
                     }
 
                     # Calculate ATR
