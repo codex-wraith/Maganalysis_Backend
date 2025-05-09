@@ -419,31 +419,38 @@ class MarketManager:
         price_data = {"price": 0.0, "change_percent_val": 0.0, "change_percent_str": "0.00%", "direction": "neutral"}
         sentiment_data = {"score": 50.0, "label": "NEUTRAL", "mood_direction": "neutral"}
 
-        # Fetch Price Data (e.g., daily)
+        # Fetch current price using exchange rate
         try:
-            # Using get_crypto_daily for price and change
-            raw_price_info = await self.get_crypto_daily(symbol=symbol_upper, market=market)
-            if raw_price_info and "Time Series (Digital Currency Daily)" in raw_price_info:
-                time_series = raw_price_info["Time Series (Digital Currency Daily)"]
-                latest_date = sorted(time_series.keys(), reverse=True)[0]
-                latest_candle = time_series[latest_date]
+            # Get real-time price using exchange rate
+            exchange_rate_data = await self.get_exchange_rate(from_currency=symbol_upper, to_currency=market)
 
-                current_price = float(latest_candle.get("4a. close (USD)", 0.0))
+            if exchange_rate_data and "Realtime Currency Exchange Rate" in exchange_rate_data:
+                rate_data = exchange_rate_data["Realtime Currency Exchange Rate"]
+                current_price = float(rate_data.get("5. Exchange Rate", 0.0))
                 price_data["price"] = current_price
 
-                if len(time_series.keys()) > 1:
-                    prev_date = sorted(time_series.keys(), reverse=True)[1]
-                    prev_close = float(time_series[prev_date].get("4a. close (USD)", 0.0))
-                    if prev_close != 0:
-                        change = current_price - prev_close
-                        change_p = (change / prev_close) * 100
-                        price_data["change_percent_val"] = change_p
-                        price_data["change_percent_str"] = f"{'+' if change_p >= 0 else ''}{change_p:.2f}%"
-                        price_data["direction"] = "up" if change_p >=0 else "down"
+                # Still need daily data for percent change
+                raw_price_info = await self.get_crypto_daily(symbol=symbol_upper, market=market)
+                if raw_price_info and "Time Series (Digital Currency Daily)" in raw_price_info:
+                    time_series = raw_price_info["Time Series (Digital Currency Daily)"]
+
+                    if len(time_series.keys()) > 1:
+                        dates = sorted(time_series.keys(), reverse=True)
+                        latest_date = dates[0]
+                        prev_date = dates[1]
+
+                        # Use yesterday's close to calculate change percentage
+                        prev_close = float(time_series[prev_date].get("4a. close (USD)", 0.0))
+                        if prev_close != 0:
+                            change = current_price - prev_close
+                            change_p = (change / prev_close) * 100
+                            price_data["change_percent_val"] = change_p
+                            price_data["change_percent_str"] = f"{'+' if change_p >= 0 else ''}{change_p:.2f}%"
+                            price_data["direction"] = "up" if change_p >= 0 else "down"
+                        else:
+                            price_data["direction"] = "neutral"
                     else:
-                         price_data["direction"] = "neutral"
-                else:
-                    price_data["direction"] = "neutral"
+                        price_data["direction"] = "neutral"
         except Exception as e:
             logger.error(f"Error fetching price data for {symbol_upper}: {e}")
 
