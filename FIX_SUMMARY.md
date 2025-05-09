@@ -193,4 +193,26 @@ else:
 ```
 
 This fix ensures that we can handle any type for the "timeframes" field and prevents the "float object has no attribute get" error.
+
+## Additional Fix - Further "float object has no attribute get" Error in _analyze_multi_timeframe_levels
+
+After deploying the initial fix, we found that the same error was still occurring, but in a different method. The error was also happening in the `_analyze_multi_timeframe_levels` method where we were doing direct access to `zone["timeframes"]` instead of using `.get()`.
+
+### Fix Implemented:
+
+We applied the same type-checking fix to the `_analyze_multi_timeframe_levels` method in aiagent.py:
+
+```python
+# Handle timeframes that might be a string, list, or any other type
+timeframes_data = zone.get("timeframes", [])
+if isinstance(timeframes_data, list):
+    timeframes = "/".join(timeframes_data)
+elif isinstance(timeframes_data, str):
+    timeframes = timeframes_data
+else:
+    # Handle float or other types by converting to string
+    timeframes = str(timeframes_data)
+```
+
+This ensures robust handling of the "timeframes" field regardless of its type, in both the MTF context generation and the level analysis summary generation.
 EOF < /dev/null
