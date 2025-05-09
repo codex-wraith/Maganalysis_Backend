@@ -442,15 +442,31 @@ class MarketManager:
                         # Use yesterday's close for comparison with today's close
                         latest_close = float(time_series[latest_date].get("4a. close (USD)", 0.0))
                         prev_close = float(time_series[prev_date].get("4a. close (USD)", 0.0))
+
+                        # Add detailed logging
+                        logger.info(f"Crypto {symbol_upper} data - Latest date: {latest_date}, Latest close: {latest_close}")
+                        logger.info(f"Crypto {symbol_upper} data - Previous date: {prev_date}, Previous close: {prev_close}")
+
                         if prev_close != 0:
-                            # Calculate daily change percentage based on close-to-close
-                            change = latest_close - prev_close
+                            # Calculate change percentage using real-time price against previous close
+                            # This gives a more current percentage change than using historical close-to-close
+                            change = current_price - prev_close
                             change_p = (change / prev_close) * 100
+
+                            # Log the difference between using real-time vs historical data
+                            historical_change = latest_close - prev_close
+                            historical_change_p = (historical_change / prev_close) * 100
+                            logger.info(f"Crypto {symbol_upper} - Real-time change%: {change_p:.2f}%, Historical change%: {historical_change_p:.2f}%")
                             price_data["change_percent_val"] = change_p
                             price_data["change_percent_str"] = f"{'+' if change_p >= 0 else ''}{change_p:.2f}%"
                             price_data["direction"] = "up" if change_p >= 0 else "down"
+
+                            # Add more logging
+                            logger.info(f"Crypto {symbol_upper} calculated - Change: {change}, Change%: {change_p}")
+                            logger.info(f"Crypto {symbol_upper} values - change_percent_str: {price_data['change_percent_str']}, direction: {price_data['direction']}")
                         else:
                             price_data["direction"] = "neutral"
+                            logger.warning(f"Crypto {symbol_upper} - Previous close is zero, can't calculate percentage")
                     else:
                         price_data["direction"] = "neutral"
         except Exception as e:
@@ -474,7 +490,8 @@ class MarketManager:
         except Exception as e:
             logger.error(f"Error fetching sentiment for {symbol_upper}: {e}")
 
-        return {
+
+        result = {
             "symbol": symbol_upper,
             "name": symbol_upper, # You can map this to full names like "Bitcoin"
             "price": price_data["price"],
@@ -485,6 +502,11 @@ class MarketManager:
             "sentiment_label": sentiment_data["label"],
             "sentiment_mood_direction": sentiment_data["mood_direction"]
         }
+
+        # Log the final result
+        logger.info(f"Crypto dashboard data for {symbol_upper}: {result}")
+
+        return result
 
     async def get_news_sentiment(self, ticker: str = None, topics: str = None, time_from: str = None, limit: int = 100, http_session: aiohttp.ClientSession = None) -> Dict:
         """
