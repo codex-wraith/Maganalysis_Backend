@@ -32,6 +32,16 @@ ImportError: cannot import name 'app' from partially initialized module 'main' (
 
 This occurred because of interdependencies between main.py, mcp_server.py, and the MCP tool modules.
 
+### Problem 4: Incorrect Method Parameters
+
+After deploying the code, we encountered a new error related to method parameters:
+
+```
+TypeError: MarketManager.get_intraday_data() got an unexpected keyword argument 'http_session'
+```
+
+This occurred because the `get_intraday_data` method in the `MarketManager` class doesn't accept an `http_session` parameter, unlike other methods in the same class.
+
 ## Solution
 
 After several iterations, our final solution involved:
@@ -58,6 +68,11 @@ After several iterations, our final solution involved:
    - Used import aliases (`import app as main_app`) to avoid conflicts
    - Replaced global references with function-scoped imports
    - Moved all MCP-related imports to registration functions
+
+5. **Fixing method parameter inconsistencies**:
+   - Removed `http_session` parameter from calls to `get_intraday_data`
+   - Kept `http_session` parameter for methods that explicitly accept it
+   - Relied on the internal HTTP session of MarketManager where needed
 
 ## Files Modified
 

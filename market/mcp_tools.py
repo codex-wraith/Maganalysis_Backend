@@ -106,7 +106,7 @@ async def get_raw_market_data(symbol: str, asset_type: str = "stock", timeframe:
                 else:  # monthly
                     data = await mm.get_time_series_monthly(symbol, http_session=http)
             else:
-                data = await mm.get_intraday_data(symbol, interval=timeframe, http_session=http)
+                data = await mm.get_intraday_data(symbol, interval=timeframe)
         
         # Slice data for performance and cache
         series_key = next((k for k in data.keys() if "Time Series" in k or "Digital Currency" in k), None)
