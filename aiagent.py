@@ -167,25 +167,31 @@ class CipherAgent:
     async def respond(self, text, platform=None, user_id=None, context=None):
         """
         Main method to process user input and generate a response.
-        
+
         This implementation uses MCP exclusively - no fallback to old implementation.
-        
+
         Args:
             text: The user's message
             platform: The platform the message is from (e.g., "telegram", "web")
             user_id: The unique identifier for the user
             context: Additional context for the request
-            
+
         Returns:
             The AI response
         """
+        # Access datetime from the global module to avoid shadowing issues
+        import sys
+        dt_module = sys.modules['datetime']
+        dt = dt_module.datetime
+        utc = dt_module.UTC
+
         try:
             # Process user message for storage
             message_data = {
                 "text": text,
                 "platform": platform or "web",
                 "user_id": user_id or "anonymous",
-                "timestamp": datetime.now(UTC).isoformat(),
+                "timestamp": dt.now(utc).isoformat(),
                 "context": context or {}
             }
             
