@@ -18,7 +18,7 @@ from market.price_levels import PriceLevelAnalyzer, LevelType
 from utils.message_handling import MessageProcessor
 
 # Import the tools directly from their module files
-from market.mcp_tools import get_technical_indicators, get_news_sentiment, get_raw_market_data, add_market_analysis_to_context
+from market.mcp_tools import get_technical_indicators, get_news_sentiment, get_raw_market_data
 from market.mcp_price_levels import get_price_levels
 from market.mcp_multi_timeframe import analyze_multi_timeframe
 
@@ -258,36 +258,341 @@ class CipherAgent:
             formatted_history = await self._format_conversation_history(conversation_history)
             if formatted_history:
                 system_prompts_content.append(formatted_history)
-            
-            # Add market analysis context content (as system instruction)
-            is_analysis_request = self._is_analysis_request(text)
-            if is_analysis_request:
-                # Extract symbol and timeframe
-                symbol = self._extract_ticker(text)
-                timeframe = self._extract_interval(text)
-                
-                if symbol:
-                    # Detect asset type
-                    asset_type = self._determine_asset_type(symbol)
-                    
-                    # Get market analysis as string
+
+            # --- START: Dynamic Data Injection for Specific Commands ---
+            lower_text = text.lower()
+
+            # 1. Handle Search Queries (Tavily)
+            search_query = ""
+            search_type = None
+            search_depth = "basic"  # Default search depth
+            time_filter = "week"    # Default time filter
+            max_results = 5         # Default max results
+            search_context_label = "Search Results"
+
+            if "news:" in lower_text:
+                search_query = lower_text.split("news:", 1)[1].strip()
+                search_type = "news"
+                time_filter = "day"
+                max_results = 8
+                search_context_label = "News Search Results"
+            elif "deepsearch:" in lower_text:
+                search_query = lower_text.split("deepsearch:", 1)[1].strip()
+                search_type = "general"
+                search_depth = "advanced"
+                time_filter = "day"
+                search_context_label = "Deep Research Results"
+            elif "search:" in lower_text:
+                search_query = lower_text.split("search:", 1)[1].strip()
+                search_type = "general"
+                search_context_label = "Search Results"
+
+            if search_query and self.tavily_client:
+                logger.debug(f"Triggering Tavily {search_type or 'general'} query: '{search_query}' (depth: {search_depth}, timeframe: {time_filter})")
+                try:
+                    search_params = {
+                        "query": search_query,
+                        "search_depth": search_depth,
+                        "max_results": max_results,
+                        "include_answer": True, # Get summarized answer
+                    }
+
+                    # Handle search type and time filter
+                    if search_type == "news":
+                        search_params["topic"] = "news"
+
+                    # Add time filtering based on the time_filter value
+                    # Convert logical time filters to specific date ranges
+                    from datetime import datetime, timedelta, UTC
+
+                    now = datetime.now(UTC)
+
+                    if time_filter == "day":
+                        # Last 24 hours
+                        yesterday = now - timedelta(days=1)
+                        search_params["start_published_date"] = yesterday.strftime("%Y-%m-%dT%H:%M:%SZ")
+                    elif time_filter == "week":
+                        # Last 7 days
+                        last_week = now - timedelta(days=7)
+                        search_params["start_published_date"] = last_week.strftime("%Y-%m-%dT%H:%M:%SZ")
+                    elif time_filter == "month":
+                        # Last 30 days
+                        last_month = now - timedelta(days=30)
+                        search_params["start_published_date"] = last_month.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+                    # Set end date to now
+                    search_params["end_published_date"] = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+                    logger.debug(f"Using Tavily search parameters: {search_params}")
+                    search_response = await self.tavily_client.search(**search_params)
+
+                    search_context_data = ""
+                    if search_response and "answer" in search_response:
+                        search_context_data += search_response["answer"] + "\n\n"
+                    if search_response and "results" in search_response and search_response["results"]:
+                        search_context_data += f"{search_context_label.replace('Results', 'Sources')}:\n"
+                        for idx, result in enumerate(search_response["results"], 1):
+                            title = result.get("title", "Untitled")
+                            url = result.get("url", "No URL")
+                            snippet = result.get("snippet", "No snippet available")
+                            # Similar date formatting as in non-MCP:
+                            DATE_PATTERN = r'\b\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{4}\b'
+                            date_match = re.search(DATE_PATTERN, f"{title} {snippet}", re.IGNORECASE)
+                            date_str = f" ({date_match.group(0)})" if date_match else ""
+                            recency_marker = ""
+                            if date_match and date_match.group(0) and self.is_recent_date(date_match.group(0), max_days=3):
+                                recency_marker = "🆕 "
+                            search_context_data += f"{idx}. {recency_marker}{title}{date_str}\n   URL: {url}\n   Summary: {snippet}\n\n"
+
+                    if search_context_data:
+                        system_prompts_content.append(f"\n\n{search_context_label}:\n{search_context_data}")
+                    else:
+                        system_prompts_content.append(f"\n\nNo relevant {search_type or 'general'} results found for '{search_query}'.")
+                except Exception as e:
+                    logger.error(f"Error during Tavily {search_type or 'general'} search: {e}")
+                    system_prompts_content.append(f"\n\nError performing {search_type or 'general'} search: {str(e)}")
+
+            # 2. Handle "intraday" command
+            elif "intraday" in lower_text:
+                ticker = self._extract_ticker(text)
+                interval = self._extract_interval(text) or "5min"
+
+                formatted_data_str = f"Could not retrieve intraday data for {ticker}."
+                if ticker:
                     try:
-                        # Use the already imported add_market_analysis_to_context function
-                        
-                        # Call WITHOUT messages_list to get the string content
-                        market_analysis_context_str = await add_market_analysis_to_context(
-                            self,
-                            symbol=symbol,
-                            asset_type=asset_type,
-                            timeframe=timeframe or "daily"
-                            # messages_list is omitted here
-                        )
-                        if market_analysis_context_str:
-                            system_prompts_content.append(market_analysis_context_str)
+                        is_crypto_req = "crypto" in lower_text or self._determine_asset_type(ticker) == "crypto"
+
+                        if is_crypto_req:
+                            raw_intraday_data = await self.market_manager.get_crypto_intraday(symbol=ticker.replace("CRYPTO:", ""), market="USD", interval=interval)
+                            pm_format_config = self.prompt_manager.get_intraday_formatting(is_crypto=True, ticker=ticker, interval=interval)
+
+                            if raw_intraday_data and "Time Series Crypto" in str(raw_intraday_data):
+                                # Use proper formatting with prompt manager configuration
+                                time_series_key = next((k for k in raw_intraday_data.keys() if k.startswith("Time Series") or k == "data"), None)
+
+                                if time_series_key and time_series_key in raw_intraday_data:
+                                    time_series_data = raw_intraday_data[time_series_key]
+                                    # Create a clean, well-structured format using prompt manager config
+                                    formatted_data_str = ""
+
+                                    # Use intro from prompt manager with proper ticker and interval
+                                    intro = pm_format_config.get("intro", "").format(
+                                        ticker=ticker.upper(),
+                                        interval=interval
+                                    )
+                                    formatted_data_str += f"{intro}\n\n"
+
+                                    # Add header with proper interval
+                                    header = pm_format_config.get("header", "").format(
+                                        interval=interval
+                                    )
+                                    formatted_data_str += f"{header}\n\n"
+
+                                    # Add intro to the data display
+                                    vertical_intro = pm_format_config.get("vertical_intro", "")
+                                    formatted_data_str += f"{vertical_intro}\n\n"
+
+                                    # Get most recent entries (up to 5)
+                                    recent_times = sorted(time_series_data.keys(), reverse=True)[:5]
+
+                                    for timestamp in recent_times:
+                                        entry = time_series_data[timestamp]
+                                        # Map keys based on common Alpha Vantage response format
+                                        open_price = entry.get("1. open", entry.get("open", "N/A"))
+                                        high_price = entry.get("2. high", entry.get("high", "N/A"))
+                                        low_price = entry.get("3. low", entry.get("low", "N/A"))
+                                        close_price = entry.get("4. close", entry.get("close", "N/A"))
+                                        volume = entry.get("5. volume", entry.get("volume", "N/A"))
+
+                                        # Format timestamp for better readability
+                                        try:
+                                            # Try to parse and reformat the timestamp
+                                            from datetime import datetime
+                                            dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+                                            display_time = dt.strftime("%Y-%m-%d %H:%M")
+                                        except:
+                                            # If parsing fails, use the original timestamp
+                                            display_time = timestamp
+
+                                        # Format using prompt manager template with better timestamp display
+                                        formatted_entry = pm_format_config.get("vertical_record_format", "").format(
+                                            time=display_time,
+                                            open=self._format_price(open_price),
+                                            high=self._format_price(high_price),
+                                            low=self._format_price(low_price),
+                                            close=self._format_price(close_price),
+                                            volume=self._format_volume(volume)
+                                        )
+                                        formatted_data_str += f"{formatted_entry}\n\n"
+
+                                    # Add footer to complete the presentation
+                                    footer = pm_format_config.get("footer", "")
+                                    formatted_data_str += footer
+                                else:
+                                    formatted_data_str = f"Crypto Intraday Data for {ticker} ({interval}) could not be formatted."
+                            else:
+                                formatted_data_str = f"No crypto intraday data found for {ticker}."
+                        else: # Stock
+                            raw_intraday_data = await self.market_manager.get_intraday_data(symbol=ticker, interval=interval, outputsize="compact")
+                            pm_format_config = self.prompt_manager.get_intraday_formatting(is_crypto=False, ticker=ticker, interval=interval)
+
+                            if raw_intraday_data and any(k for k in raw_intraday_data.keys() if k.startswith("Time Series")):
+                                # Use proper formatting with prompt manager configuration
+                                time_series_key = next((k for k in raw_intraday_data.keys() if k.startswith("Time Series")), None)
+
+                                if time_series_key and time_series_key in raw_intraday_data:
+                                    time_series_data = raw_intraday_data[time_series_key]
+                                    # Create a clean, well-structured format using prompt manager config
+                                    formatted_data_str = ""
+
+                                    # Use intro from prompt manager with proper ticker and interval
+                                    intro = pm_format_config.get("intro", "").format(
+                                        ticker=ticker.upper(),
+                                        interval=interval
+                                    )
+                                    formatted_data_str += f"{intro}\n\n"
+
+                                    # Add header with proper interval
+                                    header = pm_format_config.get("header", "").format(
+                                        interval=interval
+                                    )
+                                    formatted_data_str += f"{header}\n\n"
+
+                                    # Add intro to the data display
+                                    vertical_intro = pm_format_config.get("vertical_intro", "")
+                                    formatted_data_str += f"{vertical_intro}\n\n"
+
+                                    # Get most recent entries (up to 5)
+                                    recent_times = sorted(time_series_data.keys(), reverse=True)[:5]
+
+                                    for timestamp in recent_times:
+                                        entry = time_series_data[timestamp]
+                                        # Map keys based on common Alpha Vantage response format
+                                        open_price = entry.get("1. open", entry.get("open", "N/A"))
+                                        high_price = entry.get("2. high", entry.get("high", "N/A"))
+                                        low_price = entry.get("3. low", entry.get("low", "N/A"))
+                                        close_price = entry.get("4. close", entry.get("close", "N/A"))
+                                        volume = entry.get("5. volume", entry.get("volume", "N/A"))
+
+                                        # Format timestamp for better readability
+                                        try:
+                                            # Try to parse and reformat the timestamp
+                                            from datetime import datetime
+                                            dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+                                            display_time = dt.strftime("%Y-%m-%d %H:%M")
+                                        except:
+                                            # If parsing fails, use the original timestamp
+                                            display_time = timestamp
+
+                                        # Format using prompt manager template with better timestamp display
+                                        formatted_entry = pm_format_config.get("vertical_record_format", "").format(
+                                            time=display_time,
+                                            open=self._format_price(open_price),
+                                            high=self._format_price(high_price),
+                                            low=self._format_price(low_price),
+                                            close=self._format_price(close_price),
+                                            volume=self._format_volume(volume)
+                                        )
+                                        formatted_data_str += f"{formatted_entry}\n\n"
+
+                                    # Add footer to complete the presentation
+                                    footer = pm_format_config.get("footer", "")
+                                    formatted_data_str += footer
+                                else:
+                                    formatted_data_str = f"Stock Intraday Data for {ticker} ({interval}) could not be formatted."
+                            else:
+                                formatted_data_str = f"No stock intraday data found for {ticker}."
+
+                        system_prompts_content.append(f"\n\n```\n{formatted_data_str}\n```")
                     except Exception as e:
-                        logger.error(f"Error adding market analysis context: {e}", exc_info=True)
-                        system_prompts_content.append(f"Note: Market data for {symbol} could not be retrieved. Error: {str(e)}")
-            
+                        logger.error(f"Error fetching/formatting intraday data for {ticker}: {e}")
+                        system_prompts_content.append(f"\n\nError retrieving intraday data for {ticker}.")
+                else: # No ticker found for intraday
+                    system_prompts_content.append("\n\nPlease provide a valid ticker symbol for intraday analysis.")
+
+            # 3. Handle "top movers" command
+            elif "top movers" in lower_text:
+                try:
+                    top_data = await self.market_manager.get_top_gainers_losers()
+                    top_format_config = self.prompt_manager.get_top_movers_formatting()
+
+                    if top_data.get('gainers') or top_data.get('most_actively_traded'):
+                        display_count = 15
+                        top_gainers = top_data.get("gainers", [])[:display_count]
+                        top_active = top_data.get("most_actively_traded", [])[:display_count]
+
+                        gainers_formatted_lines = [
+                            top_format_config["line_format"].format(
+                                emoji=top_format_config["gainers_emoji"],
+                                ticker=str(item.get('ticker', 'N/A')).strip(),
+                                price=self._format_price(item.get('price', 'N/A')),
+                                change_percentage=self._sanitize_numeric_field(item.get('change_percentage', 'N/A'))
+                            ) for item in top_gainers
+                        ]
+                        gainers_formatted = "\n".join(gainers_formatted_lines) or top_format_config["empty_message"]
+
+                        active_formatted_lines = [
+                            top_format_config["line_format"].format(
+                                emoji=top_format_config["active_emoji"],
+                                ticker=str(item.get('ticker', 'N/A')).strip(),
+                                price=self._format_price(item.get('price', 'N/A')),
+                                change_percentage=self._sanitize_numeric_field(item.get('change_percentage', 'N/A'))
+                            ) for item in top_active
+                        ]
+                        active_formatted = "\n".join(active_formatted_lines) or top_format_config["empty_message"]
+
+                        stock_context = (
+                            f"{top_format_config.get('instructions', '')}\n\n"
+                            f"IMPORTANT: DO NOT USE ANY MARKDOWN FORMATTING CHARACTERS (NO #, ##, *, _).\n\n"
+                            f"{top_format_config.get('wrapper_start', '')}\n"
+                            f"{top_format_config.get('title', 'THE MARKET WATCH - DAILY MOVERS')}\n\n"
+                            f"{top_format_config.get('gainers_header', 'Top Gainers:')}\n"
+                            f"{gainers_formatted}\n\n"
+                            f"{top_format_config.get('active_header', 'Most Actively Traded:')}\n"
+                            f"{active_formatted}\n"
+                            f"{top_format_config.get('wrapper_end', '')}\n\n"
+                            f"Format exactly like this example (no markdown):\n{top_format_config.get('example_format', '')}"
+                        )
+                        system_prompts_content.append(f"\n\n{stock_context}")
+                    else:
+                        system_prompts_content.append(f"\n\n{top_format_config.get('empty_message', 'No top movers data available.')}")
+                except Exception as e:
+                    logger.error(f"Error fetching/formatting top movers: {e}")
+                    system_prompts_content.append("\n\nError retrieving top movers data.")
+
+            # 4. Handle "current price" command
+            elif "current price" in lower_text:
+                # Pattern to find "current price of SYMBOL" or "current price SYMBOL"
+                match = re.search(r"current price\s*(?:from|of)?\s*([A-Za-z0-9\-]+)", lower_text)
+                from_currency_symbol = ""
+                if match:
+                    from_currency_symbol = self._extract_ticker(match.group(1))
+                else: # Fallback if "of" or "from" is not used
+                    tokens = text.split()
+                    if "price" in tokens:
+                        price_idx = tokens.index("price")
+                        if price_idx + 1 < len(tokens):
+                            from_currency_symbol = self._extract_ticker(tokens[price_idx+1])
+
+                if from_currency_symbol:
+                    try:
+                        exchange_data = await self.market_manager.get_exchange_rate(from_currency=from_currency_symbol, to_currency="USD")
+                        rate_info = exchange_data.get("Realtime Currency Exchange Rate", {})
+                        from_name = rate_info.get("2. From_Currency Name", from_currency_symbol)
+                        exchange_rate_val = rate_info.get("5. Exchange Rate", "N/A")
+                        formatted_rate = self._format_price(exchange_rate_val) if exchange_rate_val != "N/A" else "N/A"
+                        price_message = f"Current Exchange Rate: {from_name} is {formatted_rate} USD."
+                        system_prompts_content.append(f"\n\n{price_message}")
+                    except Exception as e:
+                        logger.error(f"Error fetching current price for {from_currency_symbol}: {e}")
+                        system_prompts_content.append(f"\n\nError retrieving current price for {from_currency_symbol}.")
+                else:
+                    system_prompts_content.append("\n\nPlease specify a currency symbol to get its current price (e.g., 'current price BTC').")
+
+            # If this is an analysis request but not handled by any of the special commands above,
+            # let it be routed to the dedicated analyze_asset method instead of adding market analysis here
+            # --- END: Dynamic Data Injection ---
+
             # Combine all system instructions into a single string
             final_system_prompt = "\n\n".join(system_prompts_content)
             
@@ -474,8 +779,8 @@ class CipherAgent:
     async def analyze_asset(self, symbol, asset_type="stock", market="USD", interval="60min", for_user_display=False, platform="web"):
         """
         Analyze an asset and return a comprehensive analysis.
-        Completely implemented using MCP tools.
-        
+        Implementation using direct data gathering and formatting rather than MCP tools.
+
         Args:
             symbol: The asset symbol (e.g., AAPL, BTC)
             asset_type: Either "stock" or "crypto"
@@ -483,241 +788,429 @@ class CipherAgent:
             interval: The timeframe to analyze
             for_user_display: Whether to format the output for user display
             platform: Target platform for formatting ("web", "telegram")
-            
+
         Returns:
             A string containing the analysis
         """
         try:
-            # --- Prepare System Prompt ---
-            system_prompts_content = []  # List to hold all system instruction strings
-            
-            # Get market analysis template from PromptManager
-            market_analysis_template = self.prompt_manager.get_template_section('market_analysis_template')
-            if market_analysis_template:
-                analysis_prompt = market_analysis_template.get("header", "") + \
-                                 market_analysis_template.get("sentiment_section", "") + \
-                                 market_analysis_template.get("recommendation_section", "")
+            # --- Direct Data Gathering ---
+
+            # 1. Analyze primary timeframe
+            primary_timeframe_data = await self._analyze_timeframe(
+                symbol=symbol,
+                asset_type=asset_type,
+                market=market,
+                interval=interval
+            )
+
+            # Get current price and other metadata from primary timeframe
+            current_price = primary_timeframe_data.get("current_price")
+            price_change_pct = primary_timeframe_data.get("price_change_pct", 0)
+            change_direction = primary_timeframe_data.get("change_direction", "→")
+            latest_atr = primary_timeframe_data.get("indicators", {}).get("atr", {}).get("value")
+
+            # 2. Get multi-timeframe levels and insights
+            mtf_data = await self._analyze_multi_timeframe_levels(
+                symbol=symbol,
+                asset_type=asset_type,
+                current_price=current_price,
+                main_interval=interval,
+                latest_atr=latest_atr
+            )
+
+            # 3. Get news sentiment data
+            # Initialize variables for sentiment
+            signal_base = mtf_data.get("signal", "NEUTRAL") if mtf_data else "NEUTRAL"
+            reasoning = mtf_data.get("reasoning", "Insufficient data") if mtf_data else "Insufficient data"
+
+            # Enhance with sentiment analysis
+            signal, reasoning, sentiment_data = await self.enhance_with_sentiment(
+                symbol=symbol,
+                signal_base=signal_base,
+                reasoning=reasoning
+            )
+
+            # --- Construct technical_indicators_text ---
+
+            # Extract indicators from primary timeframe data
+            indicators = primary_timeframe_data.get("indicators", {})
+            trend_data = primary_timeframe_data.get("trend", {})
+
+            # Calculate support/resistance proximity
+            support_levels = primary_timeframe_data.get("support_levels", [])
+            resistance_levels = primary_timeframe_data.get("resistance_levels", [])
+
+            # Get indicator values
+            latest_rsi = indicators.get("rsi", {}).get("value")
+            rsi_interpretation = "Neutral"
+            if latest_rsi is not None:
+                if latest_rsi >= 70:
+                    rsi_interpretation = "Overbought"
+                elif latest_rsi <= 30:
+                    rsi_interpretation = "Oversold"
+                elif latest_rsi >= 60:
+                    rsi_interpretation = "Bullish momentum"
+                elif latest_rsi <= 40:
+                    rsi_interpretation = "Bearish momentum"
+
+            latest_sma = indicators.get("sma", {}).get("value")
+            sma_period = indicators.get("sma", {}).get("period", 50)
+
+            latest_ema = indicators.get("ema", {}).get("value")
+            ema_period = indicators.get("ema", {}).get("period", 20)
+
+            # Price vs Moving Averages
+            price_vs_ma = "above"
+            if latest_sma is not None and current_price < latest_sma:
+                price_vs_ma = "below"
+
+            # MACD
+            macd_value = indicators.get("macd", {}).get("value")
+            signal_value = indicators.get("macd", {}).get("signal")
+            macd_trend = "neutral"
+            macd_interpretation = "Neutral momentum"
+            if macd_value is not None and signal_value is not None:
+                if macd_value > signal_value:
+                    macd_trend = "bullish"
+                    if macd_value > 0:
+                        macd_interpretation = "Strong bullish momentum"
+                    else:
+                        macd_interpretation = "Weakening bearish momentum"
+                else:
+                    macd_trend = "bearish"
+                    if macd_value < 0:
+                        macd_interpretation = "Strong bearish momentum"
+                    else:
+                        macd_interpretation = "Weakening bullish momentum"
+
+            # Bollinger Bands
+            bbands_upper = indicators.get("bbands", {}).get("upper")
+            bbands_lower = indicators.get("bbands", {}).get("lower")
+            bbands_status = "within range"
+            if bbands_upper is not None and bbands_lower is not None:
+                if current_price > bbands_upper:
+                    bbands_status = "above upper band (potentially overbought)"
+                elif current_price < bbands_lower:
+                    bbands_status = "below lower band (potentially oversold)"
+
+            # ATR
+            latest_atr = indicators.get("atr", {}).get("value")
+            atr_pct = None
+            atr_interpretation = "Average volatility"
+            if latest_atr is not None and current_price:
+                atr_pct = (latest_atr / current_price) * 100
+                if atr_pct > 3:
+                    atr_interpretation = "High volatility"
+                elif atr_pct < 1:
+                    atr_interpretation = "Low volatility"
+
+            # Stochastic
+            k_value = indicators.get("stochastic", {}).get("k")
+            d_value = indicators.get("stochastic", {}).get("d")
+            stoch_interpretation = "Neutral momentum"
+            if k_value is not None and d_value is not None:
+                if k_value > 80 and d_value > 80:
+                    stoch_interpretation = "Strongly overbought"
+                elif k_value < 20 and d_value < 20:
+                    stoch_interpretation = "Strongly oversold"
+                elif k_value > d_value:
+                    stoch_interpretation = "Bullish momentum building"
+                elif k_value < d_value:
+                    stoch_interpretation = "Bearish momentum building"
+
+            # ADX for trend strength
+            latest_adx = indicators.get("adx", {}).get("value")
+            trend_strength = "moderate"
+            if latest_adx is not None:
+                if latest_adx > 25:
+                    trend_strength = "strong"
+                elif latest_adx < 15:
+                    trend_strength = "weak"
+
+            # Trend direction
+            trend = trend_data.get("direction", "neutral").upper()
+
+            # Volume analysis
+            vol_comment = primary_timeframe_data.get("volume_comment", "Volume is at average levels")
+
+            # VWAP
+            vwap_value = indicators.get("vwap", {}).get("value")
+            is_extended = interval in ["daily", "weekly", "monthly"]
+
+            # Determine signal based on indicator consensus
+            indicator_signals = []
+            if trend_data.get("direction") == "uptrend":
+                indicator_signals.append("BUY")
+            elif trend_data.get("direction") == "downtrend":
+                indicator_signals.append("SELL")
+
+            if latest_rsi is not None:
+                if latest_rsi > 70:
+                    indicator_signals.append("OVERBOUGHT")
+                elif latest_rsi < 30:
+                    indicator_signals.append("OVERSOLD")
+
+            if macd_trend == "bullish":
+                indicator_signals.append("BUY")
+            elif macd_trend == "bearish":
+                indicator_signals.append("SELL")
+
+            # Determine signal based on indicator consensus
+            # Start with the multi-timeframe signal as a base
+            signal = mtf_data.get("signal", "NEUTRAL") if mtf_data else "NEUTRAL"
+
+            # Count buy/sell indicators
+            buy_count = 0
+            sell_count = 0
+
+            # Check various indicators
+            if trend_data.get("direction") == "uptrend":
+                buy_count += 1
+            elif trend_data.get("direction") == "downtrend":
+                sell_count += 1
+
+            if latest_rsi is not None:
+                if latest_rsi > 70:
+                    sell_count += 1  # Overbought
+                elif latest_rsi < 30:
+                    buy_count += 1   # Oversold
+                elif latest_rsi > 60:
+                    buy_count += 0.5  # Bullish momentum but not extreme
+                elif latest_rsi < 40:
+                    sell_count += 0.5  # Bearish momentum but not extreme
+
+            if macd_trend == "bullish":
+                buy_count += 1
+            elif macd_trend == "bearish":
+                sell_count += 1
+
+            if bbands_status and "above" in bbands_status:
+                sell_count += 0.5
+            elif bbands_status and "below" in bbands_status:
+                buy_count += 0.5
+
+            if k_value is not None and d_value is not None:
+                if k_value > 80 and d_value > 80:
+                    sell_count += 0.5
+                elif k_value < 20 and d_value < 20:
+                    buy_count += 0.5
+                elif k_value > d_value:
+                    buy_count += 0.3
+                elif k_value < d_value:
+                    sell_count += 0.3
+
+            # Final decision based on counts and strength
+            if buy_count > sell_count + 1:
+                if buy_count > 2.5:
+                    signal = "STRONG BUY"
+                else:
+                    signal = "BUY"
+            elif sell_count > buy_count + 1:
+                if sell_count > 2.5:
+                    signal = "STRONG SELL"
+                else:
+                    signal = "SELL"
+            elif buy_count > sell_count:
+                signal = "ACCUMULATE"
+            elif sell_count > buy_count:
+                signal = "REDUCE"
             else:
-                # Fallback to a basic template if not found
-                analysis_prompt = "Analyze this asset based on technical indicators, price levels, and market sentiment."
-                
-            system_prompts_content.append(analysis_prompt)
-            
-            # Generate dynamic multi-timeframe analysis instead of using a static template
-            # First, get data across multiple timeframes to build a data-driven MTF context
-            current_price = None
-            latest_atr = None
-            mtf_context = ""
-            
-            # Get multi-timeframe support/resistance levels
-            try:
-                # First get data for the primary timeframe to extract current price and ATR using direct function call
-                primary_tech_data = await get_technical_indicators(symbol=symbol, asset_type=asset_type, timeframe=interval)
-                if primary_tech_data and "price_data" in primary_tech_data:
-                    current_price = primary_tech_data.get("price_data", {}).get("current")
-                    latest_atr = primary_tech_data.get("indicators", {}).get("atr", {}).get("value")
-                
-                # Now get multi-timeframe analysis
-                if current_price:
-                    # Get MTF analysis which includes consolidated support/resistance zones using direct function calls
-                    mtf_analysis = await analyze_multi_timeframe(symbol=symbol, asset_type=asset_type, primary_timeframe=interval)
-                    price_levels = await get_price_levels(symbol=symbol, asset_type=asset_type, timeframe=interval)
-                    
-                    # Generate a text summary of MTF analysis that reflects the data
-                    mtf_context = "MULTI-TIMEFRAME ANALYSIS:\n\n"
-                    
-                    # Add signal and reasoning from MTF analysis
-                    mtf_context += f"Overall Signal: {mtf_analysis.get('signal', 'NEUTRAL')}\n"
-                    mtf_context += f"Reasoning: {mtf_analysis.get('reasoning', 'Insufficient data')}\n\n"
-                    
-                    # Add key support levels
-                    mtf_context += "Key Support Levels (across timeframes):\n"
-                    support_zones = price_levels.get("consolidated_support", [])
-                    for zone in support_zones[:3]:  # Top 3 support zones
-                        if "price" in zone and zone["price"] < current_price:
-                            # Handle timeframes that might be a string, list, or any other type
-                            timeframes_data = zone.get("timeframes", [])
-                            if isinstance(timeframes_data, list):
-                                timeframes = "/".join(timeframes_data)
-                            elif isinstance(timeframes_data, str):
-                                timeframes = timeframes_data
-                            else:
-                                # Handle float or other types by converting to string
-                                timeframes = str(timeframes_data)
-                                
-                            strength = zone.get('strength', 0)
-                            mtf_context += f"- ${zone['price']} (strength: {strength:.1f}, timeframes: {timeframes})\n"
-                    
-                    # Add key resistance levels  
-                    mtf_context += "\nKey Resistance Levels (across timeframes):\n"
-                    resistance_zones = price_levels.get("consolidated_resistance", [])
-                    for zone in resistance_zones[:3]:  # Top 3 resistance zones
-                        if "price" in zone and zone["price"] > current_price:
-                            # Handle timeframes that might be a string, list, or any other type
-                            timeframes_data = zone.get("timeframes", [])
-                            if isinstance(timeframes_data, list):
-                                timeframes = "/".join(timeframes_data)
-                            elif isinstance(timeframes_data, str):
-                                timeframes = timeframes_data
-                            else:
-                                # Handle float or other types by converting to string
-                                timeframes = str(timeframes_data)
-                                
-                            strength = zone.get('strength', 0)
-                            mtf_context += f"- ${zone['price']} (strength: {strength:.1f}, timeframes: {timeframes})\n"
-            except Exception as e:
-                logger.error(f"Error generating MTF context: {e}")
-                # Fallback to generic MTF guidelines
-                mtf_context = f"""
-                Multi-timeframe Analysis Guidelines:
-                - Primary timeframe: {interval}
-                - When analyzing, consider both higher and lower timeframes
-                - Higher timeframes show overall trend direction
-                - Lower timeframes reveal entry/exit opportunities
-                - Confluence of signals across timeframes indicates stronger support/resistance
-                """
-            
-            # Add the data-driven MTF context
-            system_prompts_content.append(mtf_context)
-            
-            # Gather technical analysis data using direct function calls
-            tech_data = await get_technical_indicators(symbol=symbol, asset_type=asset_type, timeframe=interval)
-            price_levels = await get_price_levels(symbol=symbol, asset_type=asset_type, timeframe=interval)
-            sentiment = await get_news_sentiment(symbol=symbol)
-            
-            # Get multi-timeframe analysis if not already fetched
-            if 'mtf_analysis' not in locals() or not mtf_analysis:
-                mtf_analysis = await analyze_multi_timeframe(symbol=symbol, asset_type=asset_type, primary_timeframe=interval)
-            
-            # Add market data to context
-            analysis_context = f"""
-            ## Technical Analysis Data for {symbol} ({interval})
-            
-            Current Price: ${tech_data.get('price_data', {}).get('current', 'N/A')}
-            
-            Technical Indicators:
-            {json.dumps(tech_data.get('indicators', {}), indent=2)}
-            
-            Support/Resistance Levels:
-            Support: {json.dumps(price_levels.get('formatted_support', []))} below current price
-            Resistance: {json.dumps(price_levels.get('formatted_resistance', []))} above current price
-            
-            News Sentiment:
-            Score: {sentiment.get('sentiment', {}).get('score', 'N/A')} ({sentiment.get('sentiment', {}).get('label', 'NEUTRAL')})
-            News Count: {sentiment.get('news_count', 0)}
-            Most Relevant Article: {sentiment.get('most_relevant_article', {}).get('title', 'N/A') if sentiment.get('most_relevant_article') else 'N/A'}
-            
-            Signal: {mtf_analysis.get('signal', 'NEUTRAL')}
-            Reasoning: {mtf_analysis.get('reasoning', 'Insufficient data')}
-            
-            Please provide a comprehensive analysis of {symbol} based on this data. Include:
-            1. Overall trend analysis across multiple timeframes
-            2. Key support and resistance levels
-            3. Technical indicator analysis
-            4. Market sentiment impact
-            5. Potential trade scenarios with risk/reward ratios
-            6. Clear trading bias (bullish, bearish, or neutral)
-            """
-            
-            system_prompts_content.append(analysis_context)
-            
-            # Combine all system instructions into a single string
-            final_system_prompt = "\n\n".join(system_prompts_content)
-            
-            # --- Prepare Messages List (User/Assistant roles ONLY) ---
-            messages_for_llm = []
-            
-            # Add user message requesting analysis
-            user_message = f"Please analyze {symbol} on the {interval} timeframe and provide trading insights."
-            messages_for_llm.append({"role": "user", "content": user_message})
-            
-            # Generate the analysis using Anthropic client with correct structure
+                signal = "NEUTRAL"
+
+            # Adjust signal with sentiment if needed (keep the existing signal from enhance_with_sentiment)
+            logger.debug(f"Calculated signal from indicators: {signal}")
+
+            # The signal variable is already updated through enhance_with_sentiment earlier
+            # This indicator-based calculation is a fallback/additional input
+            logger.debug(f"Final signal (considering tech indicators and sentiment): {signal}")
+
+            # Format the multi-timeframe summary
+            mtf_summary = ""
+            if mtf_data:
+                mtf_summary = mtf_data.get("summary", "")
+            mtf_detail = ""
+
+            # Build technical indicators text
+            tech_indicators_list = [
+                f"- Current Price: ${current_price:.2f if current_price is not None else 'N/A'} ({change_direction} {price_change_pct:.2f if price_change_pct is not None else 'N/A'}%)",
+                f"- Trend: {trend} with {trend_strength.upper()} momentum (ADX: {latest_adx:.2f if latest_adx is not None else 'N/A'})",
+                f"- Moving Averages: Price trading {price_vs_ma} {sma_period}-day SMA (${latest_sma:.2f if latest_sma is not None else 'N/A'})",
+                f"- EMA {ema_period}-day: ${latest_ema:.2f if latest_ema is not None else 'N/A'} trending {macd_trend.lower()}"
+            ]
+
+            if not is_extended and vwap_value is not None:
+                tech_indicators_list.append(f"- VWAP: ${vwap_value:.2f} - Critical volume-weighted price level")
+
+            tech_indicators_list.extend([
+                f"- RSI: {latest_rsi:.2f if latest_rsi is not None else 'N/A'} ({rsi_interpretation})",
+                f"- MACD: {macd_value:.2f if macd_value is not None else 'N/A'} vs Signal {signal_value:.2f if signal_value is not None else 'N/A'} - {macd_interpretation}",
+                f"- Bollinger Bands: Price is {bbands_status}",
+                f"- ATR: ${latest_atr:.2f if latest_atr is not None else 'N/A'} ({atr_pct:.2f if atr_pct is not None else 'N/A'}% of price) - {atr_interpretation}",
+                f"- Stochastic: {k_value:.2f if k_value is not None else 'N/A'}/{d_value:.2f if d_value is not None else 'N/A'} - {stoch_interpretation}",
+                f"- Volume Analysis: {vol_comment}",
+                f"- Technical Signal: {signal}"
+            ])
+
+            technical_indicators_text = "\n".join(tech_indicators_list)
+
+            if mtf_summary:
+                technical_indicators_text += f"\n\n{mtf_summary}"
+            if mtf_detail:
+                technical_indicators_text += f"\n\n{mtf_detail}"
+
+            # Prepare template data with all necessary fields
+            # Ensure all variables used by market_analysis_template in prompts.json are included
+            interval_display = interval.upper()
+
+            # Format variables for template
+            formatted_price = f"{current_price:,.2f}" if current_price is not None else "N/A"
+            formatted_change_pct = f"{abs(price_change_pct):.2f}" if price_change_pct is not None else "N/A"
+
+            # Construct price vs moving average text
+            price_vs_ma_text = f"Price trading {price_vs_ma} the {sma_period}-day SMA"
+
+            # Create template data dictionary with every field used in the template
+            template_data = {
+                "ASSET_TYPE": asset_type.upper(),
+                "SYMBOL": symbol.upper(),
+                "TIMEFRAME": interval_display,
+                "PRICE": formatted_price,
+                "CHANGE_DIRECTION": change_direction,
+                "CHANGE_PCT": formatted_change_pct,
+                "SENTIMENT_LABEL": sentiment_data.get("sentiment_label", "NEUTRAL"),
+                "ARTICLE_HIGHLIGHT": sentiment_data.get("article_highlight", "No recent news articles found."),
+                "TREND": trend,
+                "TREND_STRENGTH": trend_strength.upper(),
+                "PRICE_VS_MA": price_vs_ma_text,
+                "SMA_PERIOD": str(sma_period),
+                "SMA_VALUE": self._format_price(latest_sma) if latest_sma is not None else "N/A",
+                "EMA_PERIOD": str(ema_period),
+                "EMA_VALUE": self._format_price(latest_ema) if latest_ema is not None else "N/A",
+                "RSI_VALUE": f"{latest_rsi:.2f}" if latest_rsi is not None else "N/A",
+                "RSI_INTERPRETATION": rsi_interpretation,
+                "MACD_VALUE": f"{macd_value:.2f}" if macd_value is not None else "N/A",
+                "MACD_SIGNAL": f"{signal_value:.2f}" if signal_value is not None else "N/A",
+                "MACD_INTERPRETATION": macd_interpretation,
+                "BBANDS_STATUS": bbands_status,
+                "ATR_VALUE": self._format_price(latest_atr) if latest_atr is not None else "N/A",
+                "ATR_PCT": f"{atr_pct:.2f}" if atr_pct is not None else "N/A",
+                "ATR_INTERPRETATION": atr_interpretation,
+                "STOCH_K": f"{k_value:.2f}" if k_value is not None else "N/A",
+                "STOCH_D": f"{d_value:.2f}" if d_value is not None else "N/A",
+                "STOCH_INTERPRETATION": stoch_interpretation,
+                "VOLUME_COMMENT": vol_comment,
+                "SIGNAL": signal,
+                # TRUMP_ANALYSIS will be filled after LLM call
+            }
+
+            # --- Simplify LLM system prompt ---
+
+            # Just use base system prompt with simple instruction for plain text
+            system_prompt_for_analysis = self.base_system_prompt + "\n\nIMPORTANT: Write in plain text only without markdown formatting."
+
+            # --- Create comprehensive user message for LLM ---
+
+            # Get the market analysis template sections
+            market_analysis_template_parts = self.prompt_manager.get_template_section("market_analysis_template", {})
+
+            # Prepare prompt parts for the LLM
+            prompt_parts_for_llm = {
+                "technical_data": technical_indicators_text,
+                "current_price_info": f"CURRENT PRICE: ${template_data['PRICE']}",
+                "formatting_guidance": market_analysis_template_parts.get("formatting_guidance", ""),
+                "analysis_guidance": market_analysis_template_parts.get("analysis_guidance", ""),
+                "timeframe_expectations": market_analysis_template_parts.get("timeframe_expectations", ""),
+                "conclusion_instruction": f"6. Ends with a clear conclusion about the {signal} recommendation"
+            }
+
+            # Handle news sentiment data
+            has_news = sentiment_data.get("article_highlight") and sentiment_data.get("news_count", 0) > 0
+            if has_news:
+                prompt_parts_for_llm["news_sentiment_info"] = f"NEWS SENTIMENT:\n- News Sentiment: {template_data['SENTIMENT_LABEL']}\n{template_data['ARTICLE_HIGHLIGHT']}"
+                prompt_parts_for_llm["response_format_instruction"] = market_analysis_template_parts.get("response_format_with_news", "")
+            else:
+                prompt_parts_for_llm["response_format_instruction"] = market_analysis_template_parts.get("response_format_without_news", "")
+
+            # Assemble the final prompt string for user message with more detailed instructions
+            llm_user_prompt = f"Analyze {symbol} {asset_type.upper()} on the {interval} timeframe:\n\n"
+
+            # Add technical indicators section first (most important)
+            llm_user_prompt += f"TECHNICAL INDICATORS:\n{prompt_parts_for_llm['technical_data']}\n\n"
+
+            # Add news sentiment if available
+            if has_news:
+                llm_user_prompt += f"{prompt_parts_for_llm['news_sentiment_info']}\n\n"
+
+            # Add current price information for emphasis
+            llm_user_prompt += f"{prompt_parts_for_llm['current_price_info']}\n\n"
+
+            # Add formatting and analysis guidelines with clearer structure
+            llm_user_prompt += (
+                f"FORMATTING INSTRUCTIONS:\n{prompt_parts_for_llm['formatting_guidance']}\n\n"
+                f"ANALYSIS APPROACH:\n{prompt_parts_for_llm['analysis_guidance']}\n\n"
+                f"TARGET PRICE GUIDELINES:\n{prompt_parts_for_llm['timeframe_expectations']}\n\n"
+                f"CONCLUSION REQUIREMENT:\n{prompt_parts_for_llm['conclusion_instruction']}\n\n"
+                f"FINAL RESPONSE FORMAT:\n{prompt_parts_for_llm['response_format_instruction']}\n\n"
+                f"Remember to focus on the most impactful insights and present a cohesive analysis that leads to a clear {signal} recommendation."
+            )
+
+            # --- LLM Call ---
+            messages_for_llm = [{"role": "user", "content": llm_user_prompt}]
+
+            # Generate analysis using Anthropic client
             try:
                 response = await self.anthropic_client.messages.create(
-                    messages=messages_for_llm,      # ONLY user message
-                    system=final_system_prompt,     # Pass system instructions here
+                    messages=messages_for_llm,
+                    system=system_prompt_for_analysis,
                     model=self.settings.SOCIAL_MODEL,
                     max_tokens=4000,
                     temperature=0
                 )
             except Exception as api_error:
-                # Log the specific API error
                 logger.error(f"Anthropic API call failed in analyze_asset: {api_error}", exc_info=True)
-                # Re-raise to be caught by the outer try-except
                 raise api_error
-            
-            # Extract the analysis text from Anthropic's response structure
-            analysis = ""
+
+            # Extract the analysis text from response
+            trump_analysis_text = ""
             if hasattr(response, 'content') and response.content:
                 for block in response.content:
                     if hasattr(block, 'text'):
-                        analysis += block.text
+                        trump_analysis_text += block.text
             else:
                 logger.warning("Received empty content from Anthropic API for analysis")
-                analysis = "Sorry, I encountered an issue generating the analysis."
-            
-            # Format for user display if requested
-            if for_user_display:
-                symbol_caps = symbol.upper()
-                asset_type_caps = asset_type.upper()
-                price = tech_data.get('price_data', {}).get('current', 'N/A')
-                change_pct = tech_data.get('price_data', {}).get('change_percent', 0)
-                change_direction = "📈" if change_pct >= 0 else "📉"
-                sentiment_label = sentiment.get('sentiment', {}).get('label', 'NEUTRAL')
-                
-                # Extract article highlight if available
-                article_highlight = ""
-                most_relevant = sentiment.get('most_relevant_article')
-                if most_relevant:
-                    article_highlight = f"📑 LATEST NEWS: \"{most_relevant.get('title', '')}\"\nSummary: {most_relevant.get('summary', '')}\n\n"
-                
-                formatted_analysis = f"""
-                ⚡️⚡️⚡️⚡️⚡️⚡️⚡️⚡️⚡️⚡️⚡️⚡️⚡️⚡️⚡️⚡️
-                
-                🇺🇸 MAGANALYSIS {asset_type_caps} ANALYSIS 🇺🇸
-                
-                {symbol_caps} {interval.upper()}
-                
-                💰 CURRENT {symbol_caps} PRICE: ${price}
-                
-                📊 24-HOUR CHANGE: {change_direction} {abs(change_pct):.2f}%
-                
-                ================================
-                📰🔎  NEWS SENTIMENT  📰🔎
-                ================================
-                
-                {sentiment_label}
-                
-                {article_highlight}
-                
-                =================================
-                🚨 MARKET STRATEGY 🚨
-                =================================
-                
-                {analysis}
-                
-                ⚡️⚡️⚡️⚡️⚡️⚡️⚡️⚡️⚡️⚡️⚡️⚡️⚡️⚡️⚡️⚡️
-                """
-                
-                # Process the formatted analysis through MessageProcessor
-                from utils.message_handling import MessageProcessor
+                trump_analysis_text = "Sorry, I encountered an issue generating the analysis."
+
+            # Clean up any markdown formatting the LLM might have added
+            trump_analysis_text = trump_analysis_text.strip().replace("#", "").replace("*", "")
+
+            # --- Final Output Assembly ---
+
+            # Add the LLM-generated analysis to the template data
+            template_data["TRUMP_ANALYSIS"] = trump_analysis_text
+
+            # Use PromptManager to get the fully formatted analysis
+            final_formatted_analysis = self.prompt_manager.get_market_analysis_prompt(**template_data)
+
+            # If for_user_display is false, just return the raw trump_analysis_text
+            if not for_user_display:
+                return trump_analysis_text
+
+            # Process the formatted analysis through MessageProcessor
+            # MessageProcessor already imported at the top level
+
+            # Clean the message for standard formatting
+            cleaned_analysis = MessageProcessor.clean_message(final_formatted_analysis)
+
+            # Platform-specific formatting if needed
+            if platform == "telegram":
                 from utils.mcp_message_handling import MCPMessageProcessor
-                
-                # Clean the message for standard formatting
-                cleaned_analysis = MessageProcessor.clean_message(formatted_analysis)
-                
-                # Format specifically for the platform if platform is provided
-                if 'platform' in locals() or 'platform' in globals():
-                    if platform == "telegram":
-                        cleaned_analysis = MCPMessageProcessor.format_for_telegram(cleaned_analysis)
-                
-                return cleaned_analysis
-            
-            return analysis
-            
+                cleaned_analysis = MCPMessageProcessor.format_for_telegram(cleaned_analysis)
+
+            return cleaned_analysis
+
         except Exception as e:
             error_id = f"err-{os.urandom(4).hex()}"
-            
+
             # Check if it's a specific Anthropic API error about unexpected role
             if isinstance(e, Exception) and "Unexpected role \"system\"" in str(e):
                 logger.error(f"Error ID {error_id} in analyze_asset (Anthropic Message Format Error): {e}", exc_info=True)
@@ -878,7 +1371,7 @@ class CipherAgent:
         """Extract ticker symbol from text"""
         # Implementation from original method 
         # (This preserves the existing extraction logic)
-        import re
+        # re already imported at the top level
         
         # Common crypto symbols to check for
         common_cryptos = ["BTC", "ETH", "XRP", "LTC", "ADA", "DOGE", "USDT", "USDC", 
@@ -978,52 +1471,307 @@ class CipherAgent:
     async def _analyze_timeframe(self, symbol, asset_type, market, interval):
         """
         Analyze a single timeframe for a given asset.
-        
+        Directly uses MarketManager methods and TechnicalIndicators calculations
+        without relying on MCP tools.
+
         Parameters:
             symbol: The asset symbol to analyze
             asset_type: Either "stock" or "crypto"
             market: The market for crypto assets (e.g., "USD")
             interval: The timeframe to analyze
-            
+
         Returns:
             dict: Analysis results for the timeframe
         """
         try:
-            # Get technical indicators data using direct function calls
-            tech_data = await get_technical_indicators(symbol=symbol, asset_type=asset_type, timeframe=interval)
-            price_levels = await get_price_levels(symbol=symbol, asset_type=asset_type, timeframe=interval)
-            
-            # Extract key data
-            price_data = tech_data.get("price_data", {})
-            indicators = tech_data.get("indicators", {})
-            trend_data = tech_data.get("trend", {})
-            
-            # Extract current price and metadata
-            current_price = price_data.get("current")
-            price_change_pct = price_data.get("change_percent", 0)
-            change_direction = "↑" if price_change_pct > 0 else "↓" if price_change_pct < 0 else "→"
-            
-            # Extract formatted support and resistance levels
-            support_levels = price_levels.get("formatted_support", [])
-            resistance_levels = price_levels.get("formatted_resistance", [])
-            
-            # Determine if this is an extended timeframe
-            is_extended = interval in ["daily", "weekly", "monthly"]
-            
-            # Return timeframe analysis
+            # Get raw market data directly from MarketManager based on asset type and timeframe
+            raw_market_data = None
+            processed_df = None
+            time_series_key = None
+
+            # 1. Fetch appropriate market data directly from MarketManager
+            if asset_type.lower() == "crypto":
+                if interval in ["daily", "weekly", "monthly"]:
+                    # Use appropriate crypto timeframe method
+                    if interval == "daily":
+                        raw_market_data = await self.market_manager.get_crypto_daily(
+                            symbol=symbol, market=market
+                        )
+                    elif interval == "weekly":
+                        raw_market_data = await self.market_manager.get_crypto_weekly(
+                            symbol=symbol, market=market
+                        )
+                    elif interval == "monthly":
+                        raw_market_data = await self.market_manager.get_crypto_monthly(
+                            symbol=symbol, market=market
+                        )
+                else:
+                    # Intraday data for crypto
+                    raw_market_data = await self.market_manager.get_crypto_intraday(
+                        symbol=symbol, market=market, interval=interval
+                    )
+            else:  # Stock data
+                if interval in ["daily", "weekly", "monthly"]:
+                    # Use appropriate stock timeframe method
+                    if interval == "daily":
+                        raw_market_data = await self.market_manager.get_time_series_daily(
+                            symbol=symbol
+                        )
+                    elif interval == "weekly":
+                        raw_market_data = await self.market_manager.get_time_series_weekly(
+                            symbol=symbol
+                        )
+                    elif interval == "monthly":
+                        raw_market_data = await self.market_manager.get_time_series_monthly(
+                            symbol=symbol
+                        )
+                else:
+                    # Intraday data for stocks
+                    raw_market_data = await self.market_manager.get_intraday_data(
+                        symbol=symbol, interval=interval, outputsize="compact"
+                    )
+
+            # 2. Extract time series key and process data
+            if raw_market_data:
+                # Find the time series key based on common Alpha Vantage response format
+                for key in raw_market_data.keys():
+                    if key.startswith("Time Series") or key.startswith("Digital Currency") or key == "data":
+                        time_series_key = key
+                        break
+
+                if time_series_key and time_series_key in raw_market_data:
+                    time_series_data = raw_market_data[time_series_key]
+
+                    # Process the time series data into a dataframe for calculations
+                    import pandas as pd
+
+                    # Convert to DataFrame (simple version)
+                    df = pd.DataFrame.from_dict(time_series_data, orient='index')
+
+                    # Rename columns to standardized format if needed
+                    col_mapping = {
+                        '1. open': 'open',
+                        '2. high': 'high',
+                        '3. low': 'low',
+                        '4. close': 'close',
+                        '5. volume': 'volume',
+                        '1a. open (USD)': 'open',
+                        '2a. high (USD)': 'high',
+                        '3a. low (USD)': 'low',
+                        '4a. close (USD)': 'close',
+                        '5. volume': 'volume'
+                    }
+
+                    # Apply column renaming
+                    df = df.rename(columns={col: new_col for col, new_col in col_mapping.items() if col in df.columns})
+
+                    # Ensure numeric columns
+                    for col in ['open', 'high', 'low', 'close', 'volume']:
+                        if col in df.columns:
+                            df[col] = pd.to_numeric(df[col], errors='coerce')
+
+                    # Sort by date (descending)
+                    df = df.sort_index(ascending=False)
+
+                    # Store processed dataframe
+                    processed_df = df
+
+                    # 3. Calculate technical indicators directly
+                    # TechnicalIndicators already imported at the top level
+
+                    # Calculate indicators using the TechnicalIndicators class
+                    indicators = {}
+
+                    # Calculate SMA
+                    sma_period = 50
+                    sma = TechnicalIndicators.calculate_sma(df, period=sma_period)
+                    indicators["sma"] = {
+                        "value": float(sma.iloc[0]) if not sma.empty and not pd.isna(sma.iloc[0]) else None,
+                        "period": sma_period
+                    }
+
+                    # Calculate EMA
+                    ema_period = 20
+                    ema = TechnicalIndicators.calculate_ema(df, period=ema_period)
+                    indicators["ema"] = {
+                        "value": float(ema.iloc[0]) if not ema.empty and not pd.isna(ema.iloc[0]) else None,
+                        "period": ema_period
+                    }
+
+                    # Calculate RSI
+                    rsi = TechnicalIndicators.calculate_rsi(df)
+                    indicators["rsi"] = {
+                        "value": float(rsi.iloc[0]) if not rsi.empty and not pd.isna(rsi.iloc[0]) else None,
+                        "period": 14  # Standard period
+                    }
+
+                    # Calculate MACD
+                    macd, signal, _ = TechnicalIndicators.calculate_macd(df)
+                    indicators["macd"] = {
+                        "value": float(macd.iloc[0]) if not macd.empty and not pd.isna(macd.iloc[0]) else None,
+                        "signal": float(signal.iloc[0]) if not signal.empty and not pd.isna(signal.iloc[0]) else None,
+                        "histogram": float(macd.iloc[0] - signal.iloc[0]) if not macd.empty and not signal.empty and not pd.isna(macd.iloc[0]) and not pd.isna(signal.iloc[0]) else None
+                    }
+
+                    # Calculate Bollinger Bands
+                    upper, middle, lower = TechnicalIndicators.calculate_bollinger_bands(df)
+                    indicators["bbands"] = {
+                        "upper": float(upper.iloc[0]) if not upper.empty and not pd.isna(upper.iloc[0]) else None,
+                        "middle": float(middle.iloc[0]) if not middle.empty and not pd.isna(middle.iloc[0]) else None,
+                        "lower": float(lower.iloc[0]) if not lower.empty and not pd.isna(lower.iloc[0]) else None
+                    }
+
+                    # Calculate ATR
+                    atr = TechnicalIndicators.calculate_atr(df)
+                    indicators["atr"] = {
+                        "value": float(atr.iloc[0]) if not atr.empty and not pd.isna(atr.iloc[0]) else None,
+                        "period": 14  # Standard period
+                    }
+
+                    # Calculate Stochastic Oscillator
+                    k, d = TechnicalIndicators.calculate_stochastic(df)
+                    indicators["stochastic"] = {
+                        "k": float(k.iloc[0]) if not k.empty and not pd.isna(k.iloc[0]) else None,
+                        "d": float(d.iloc[0]) if not d.empty and not pd.isna(d.iloc[0]) else None
+                    }
+
+                    # Calculate ADX
+                    adx = TechnicalIndicators.calculate_adx(df)
+                    indicators["adx"] = {
+                        "value": float(adx.iloc[0]) if not adx.empty and not pd.isna(adx.iloc[0]) else None
+                    }
+
+                    # Calculate VWAP if it's an intraday timeframe
+                    is_extended = interval in ["daily", "weekly", "monthly"]
+                    if not is_extended:
+                        vwap = TechnicalIndicators.calculate_vwap(df)
+                        indicators["vwap"] = {
+                            "value": float(vwap.iloc[0]) if not vwap.empty and not pd.isna(vwap.iloc[0]) else None
+                        }
+
+                    # 4. Generate price data
+                    price_data = {}
+                    if not df.empty and 'close' in df.columns:
+                        current_price = float(df['close'].iloc[0])
+                        previous_price = float(df['close'].iloc[1]) if len(df) > 1 else current_price
+                        price_change = current_price - previous_price
+                        price_change_pct = (price_change / previous_price) * 100 if previous_price != 0 else 0
+
+                        price_data = {
+                            "current": current_price,
+                            "open": float(df['open'].iloc[0]) if 'open' in df.columns else None,
+                            "high": float(df['high'].iloc[0]) if 'high' in df.columns else None,
+                            "low": float(df['low'].iloc[0]) if 'low' in df.columns else None,
+                            "change": price_change,
+                            "change_percent": price_change_pct,
+                            "timestamp": df.index[0]
+                        }
+
+                    # 5. Determine trend
+                    trend_direction = "neutral"
+                    trend_strength = "weak"
+                    macd_trend = "neutral"
+
+                    # Use SMA and EMA for trend direction
+                    if indicators["sma"]["value"] is not None and indicators["ema"]["value"] is not None and current_price:
+                        if current_price > indicators["sma"]["value"] and current_price > indicators["ema"]["value"]:
+                            trend_direction = "uptrend"
+                        elif current_price < indicators["sma"]["value"] and current_price < indicators["ema"]["value"]:
+                            trend_direction = "downtrend"
+
+                    # Use ADX for trend strength
+                    if indicators["adx"]["value"] is not None:
+                        adx_value = indicators["adx"]["value"]
+                        if adx_value > 25:
+                            trend_strength = "strong"
+                        elif adx_value < 15:
+                            trend_strength = "weak"
+                        else:
+                            trend_strength = "moderate"
+
+                    # Use MACD for trend momentum
+                    if indicators["macd"]["value"] is not None and indicators["macd"]["signal"] is not None:
+                        if indicators["macd"]["value"] > indicators["macd"]["signal"]:
+                            macd_trend = "bullish"
+                        else:
+                            macd_trend = "bearish"
+
+                    trend_data = {
+                        "direction": trend_direction,
+                        "strength": trend_strength,
+                        "macd_trend": macd_trend
+                    }
+
+                    # 6. Calculate support and resistance levels
+                    # PriceLevelAnalyzer and LevelType already imported at the top level
+
+                    price_level_analyzer = PriceLevelAnalyzer()
+
+                    # Calculate support and resistance for this timeframe
+                    support_levels, resistance_levels = [], []
+                    if not df.empty and len(df) > 10:  # Need enough data points
+                        # Get raw levels
+                        raw_levels = price_level_analyzer.identify_key_levels(df, current_price)
+
+                        # Format for response
+                        for level in raw_levels:
+                            if level["type"] == LevelType.SUPPORT and level["price"] < current_price:
+                                support_levels.append({
+                                    "price": level["price"],
+                                    "strength": level["strength"],
+                                    "distance": abs(current_price - level["price"]),
+                                    "distance_percent": abs(current_price - level["price"]) / current_price * 100
+                                })
+                            elif level["type"] == LevelType.RESISTANCE and level["price"] > current_price:
+                                resistance_levels.append({
+                                    "price": level["price"],
+                                    "strength": level["strength"],
+                                    "distance": abs(current_price - level["price"]),
+                                    "distance_percent": abs(current_price - level["price"]) / current_price * 100
+                                })
+
+                        # Sort by price (ascending for support, descending for resistance)
+                        support_levels = sorted(support_levels, key=lambda x: x["price"], reverse=True)
+                        resistance_levels = sorted(resistance_levels, key=lambda x: x["price"])
+
+                    # Calculate volume comment if we have enough data
+                    volume_comment = "Volume data unavailable"
+                    if processed_df is not None and 'volume' in processed_df.columns and len(processed_df) >= 10:
+                        volume_comment = self.get_volume_comment(processed_df, interval)
+
+                    # Return comprehensive analysis result with all calculated data
+                    return {
+                        "interval": interval,
+                        "current_price": price_data.get("current"),
+                        "latest_open": price_data.get("open"),
+                        "price_change_pct": price_data.get("change_percent", 0),
+                        "change_direction": "↑" if price_data.get("change_percent", 0) > 0 else "↓" if price_data.get("change_percent", 0) < 0 else "→",
+                        "most_recent_date": price_data.get("timestamp"),
+                        "indicators": indicators,
+                        "trend": trend_data,
+                        "support_levels": support_levels,
+                        "resistance_levels": resistance_levels,
+                        "is_extended": is_extended,
+                        "processed_df": processed_df,
+                        "volume_comment": volume_comment
+                    }
+
+            # Fallback if data processing fails
+            logger.warning(f"Could not process market data for {symbol} ({interval})")
             return {
                 "interval": interval,
-                "current_price": current_price,
-                "latest_open": price_data.get("open"),
-                "price_change_pct": price_change_pct,
-                "change_direction": change_direction,
-                "most_recent_date": price_data.get("timestamp"),
-                "indicators": indicators,
-                "trend": trend_data,
-                "support_levels": support_levels,
-                "resistance_levels": resistance_levels,
-                "is_extended": is_extended,
-                "processed_df": None  # We don't need to return the raw dataframe when using MCP
+                "current_price": None,
+                "latest_open": None,
+                "price_change_pct": 0,
+                "change_direction": "→",
+                "most_recent_date": None,
+                "indicators": {},
+                "trend": {"direction": "neutral", "strength": "weak", "macd_trend": "neutral"},
+                "support_levels": [],
+                "resistance_levels": [],
+                "is_extended": interval in ["daily", "weekly", "monthly"],
+                "processed_df": None,
+                "volume_comment": "Volume data unavailable"
             }
         except Exception as e:
             logger.error(f"Error analyzing timeframe {interval} for {symbol}: {e}")
@@ -1039,7 +1787,8 @@ class CipherAgent:
                 "support_levels": [],
                 "resistance_levels": [],
                 "is_extended": interval in ["daily", "weekly", "monthly"],
-                "processed_df": None
+                "processed_df": None,
+                "volume_comment": "Volume data unavailable"
             }
     
     async def _fetch_market_data(self, symbol, asset_type, interval):
@@ -1073,94 +1822,207 @@ class CipherAgent:
     async def _analyze_multi_timeframe_levels(self, symbol, asset_type, current_price, main_interval, latest_atr=None):
         """
         Analyze price levels across multiple timeframes to find key support and resistance zones.
-        
+        Directly uses MarketManager methods and PriceLevelAnalyzer without relying on MCP tools.
+
         Parameters:
             symbol: The asset symbol to analyze
             asset_type: Either "stock" or "crypto"
             current_price: The current price of the asset
             main_interval: The primary timeframe for analysis
             latest_atr: The ATR value for the main timeframe (if available)
-            
+
         Returns:
             dict: Multi-timeframe level analysis
         """
         try:
             # Initialize cache key for this analysis
             cache_key = f"mtf_levels_{symbol}_{asset_type}_{main_interval}"
-            
+
             # Check if we have a cached result that's still valid (within 5 minutes)
             if hasattr(self, '_mtf_cache') and cache_key in self._mtf_cache:
                 cached_data = self._mtf_cache[cache_key]
                 cache_age = datetime.now(UTC) - cached_data.get('timestamp', datetime.min.replace(tzinfo=UTC))
-                
+
                 # Use cached data if it's less than 5 minutes old
                 if cache_age.total_seconds() < 300:  # 5 minutes in seconds
                     logger.debug(f"Using cached multi-timeframe data for {symbol} ({main_interval})")
                     return cached_data
-            
-            # Get comprehensive price level data across timeframes using direct function calls
-            mtf_analysis = await analyze_multi_timeframe(symbol=symbol, asset_type=asset_type, primary_timeframe=main_interval)
-            price_levels = await get_price_levels(symbol=symbol, asset_type=asset_type, timeframe=main_interval)
-            
-            if "error" in mtf_analysis or "error" in price_levels:
-                logger.warning(f"Error in multi-timeframe analysis for {symbol}: {mtf_analysis.get('error') or price_levels.get('error')}")
-                return None
-                
-            # Extract support and resistance zones
-            support_zones = price_levels.get("consolidated_support", [])
-            resistance_zones = price_levels.get("consolidated_resistance", [])
-            
+
+            market = "USD"  # Default market for crypto
+
+            # Get timeframe hierarchy for the main interval
+            higher_timeframes = self.TIMEFRAME_HIERARCHY.get(main_interval, [])
+
+            # Initialize collections for multi-timeframe analysis
+            all_levels = []
+            timeframe_levels = {}
+
+            # Collect price levels from each timeframe
+            # First, analyze the main timeframe
+            main_timeframe_data = await self._analyze_timeframe(symbol, asset_type, market, main_interval)
+            if main_timeframe_data:
+                main_support = main_timeframe_data.get("support_levels", [])
+                main_resistance = main_timeframe_data.get("resistance_levels", [])
+
+                # Add all main timeframe levels with their source
+                for level in main_support:
+                    level_info = {
+                        "price": level["price"],
+                        "strength": level["strength"],
+                        "type": "support",
+                        "timeframes": [main_interval]
+                    }
+                    all_levels.append(level_info)
+                    timeframe_levels[f"{level['price']:.2f}"] = level_info
+
+                for level in main_resistance:
+                    level_info = {
+                        "price": level["price"],
+                        "strength": level["strength"],
+                        "type": "resistance",
+                        "timeframes": [main_interval]
+                    }
+                    all_levels.append(level_info)
+                    timeframe_levels[f"{level['price']:.2f}"] = level_info
+
+            # Then analyze higher timeframes
+            for higher_tf in higher_timeframes:
+                # Get data for this timeframe
+                tf_data = await self._analyze_timeframe(symbol, asset_type, market, higher_tf)
+                if tf_data:
+                    tf_support = tf_data.get("support_levels", [])
+                    tf_resistance = tf_data.get("resistance_levels", [])
+
+                    # Process support levels from this timeframe
+                    for level in tf_support:
+                        price_key = f"{level['price']:.2f}"
+                        if price_key in timeframe_levels:
+                            # Update existing level
+                            existing = timeframe_levels[price_key]
+                            existing["strength"] += level["strength"] * 0.8  # Higher timeframes get 80% weight
+                            if higher_tf not in existing["timeframes"]:
+                                existing["timeframes"].append(higher_tf)
+                        else:
+                            # Add new level
+                            level_info = {
+                                "price": level["price"],
+                                "strength": level["strength"] * 0.8,  # Higher timeframes get 80% weight
+                                "type": "support",
+                                "timeframes": [higher_tf]
+                            }
+                            all_levels.append(level_info)
+                            timeframe_levels[price_key] = level_info
+
+                    # Process resistance levels from this timeframe
+                    for level in tf_resistance:
+                        price_key = f"{level['price']:.2f}"
+                        if price_key in timeframe_levels:
+                            # Update existing level
+                            existing = timeframe_levels[price_key]
+                            existing["strength"] += level["strength"] * 0.8  # Higher timeframes get 80% weight
+                            if higher_tf not in existing["timeframes"]:
+                                existing["timeframes"].append(higher_tf)
+                        else:
+                            # Add new level
+                            level_info = {
+                                "price": level["price"],
+                                "strength": level["strength"] * 0.8,  # Higher timeframes get 80% weight
+                                "type": "resistance",
+                                "timeframes": [higher_tf]
+                            }
+                            all_levels.append(level_info)
+                            timeframe_levels[price_key] = level_info
+
+            # Consolidate similar price levels using clustering
+            # PriceLevelAnalyzer already imported at the top level
+
+            price_level_analyzer = PriceLevelAnalyzer()
+
+            # Use the price level analyzer to consolidate the levels
+            consolidated_levels = price_level_analyzer.consolidate_multi_timeframe_levels(all_levels, current_price, latest_atr)
+
+            # Separate into support and resistance
+            support_zones = [level for level in consolidated_levels if level["type"] == "support" and level["price"] < current_price]
+            resistance_zones = [level for level in consolidated_levels if level["type"] == "resistance" and level["price"] > current_price]
+
+            # Sort by proximity to current price
+            support_zones = sorted(support_zones, key=lambda x: abs(current_price - x["price"]))
+            resistance_zones = sorted(resistance_zones, key=lambda x: abs(current_price - x["price"]))
+
             # Create summary text
             summary = "MULTI-TIMEFRAME LEVEL ANALYSIS:\n"
-            
+
             # Add key support levels
             summary += "\nKey Support Levels (across timeframes):\n"
             for zone in support_zones[:3]:  # Top 3 support zones
                 if "price" in zone and zone["price"] < current_price:
-                    # Handle timeframes that might be a string, list, or any other type
+                    # Format timeframes for display
                     timeframes_data = zone.get("timeframes", [])
                     if isinstance(timeframes_data, list):
                         timeframes = "/".join(timeframes_data)
                     elif isinstance(timeframes_data, str):
                         timeframes = timeframes_data
                     else:
-                        # Handle float or other types by converting to string
                         timeframes = str(timeframes_data)
-                        
+
                     strength = zone.get('strength', 0)
-                    summary += f"- ${zone['price']} (strength: {strength:.1f}, timeframes: {timeframes})\n"
-            
-            # Add key resistance levels  
+                    summary += f"- ${zone['price']:.2f} (strength: {strength:.1f}, timeframes: {timeframes})\n"
+
+            # Add key resistance levels
             summary += "\nKey Resistance Levels (across timeframes):\n"
             for zone in resistance_zones[:3]:  # Top 3 resistance zones
                 if "price" in zone and zone["price"] > current_price:
-                    # Handle timeframes that might be a string, list, or any other type
+                    # Format timeframes for display
                     timeframes_data = zone.get("timeframes", [])
                     if isinstance(timeframes_data, list):
                         timeframes = "/".join(timeframes_data)
                     elif isinstance(timeframes_data, str):
                         timeframes = timeframes_data
                     else:
-                        # Handle float or other types by converting to string
                         timeframes = str(timeframes_data)
-                        
+
                     strength = zone.get('strength', 0)
-                    summary += f"- ${zone['price']} (strength: {strength:.1f}, timeframes: {timeframes})\n"
-            
+                    summary += f"- ${zone['price']:.2f} (strength: {strength:.1f}, timeframes: {timeframes})\n"
+
+            # Determine overall signal based on price position relative to levels
+            signal = "NEUTRAL"
+            reasoning = "Price is in a neutral zone with no clear bias."
+
+            # Check if price is near strong support
+            if support_zones and abs(current_price - support_zones[0]["price"]) / current_price < 0.02:
+                signal = "BUY"
+                reasoning = f"Price is close to strong support at ${support_zones[0]['price']:.2f}."
+            # Check if price is near strong resistance
+            elif resistance_zones and abs(current_price - resistance_zones[0]["price"]) / current_price < 0.02:
+                signal = "SELL"
+                reasoning = f"Price is close to strong resistance at ${resistance_zones[0]['price']:.2f}."
+            # Check if price has a lot of room to nearby resistance
+            elif resistance_zones and (resistance_zones[0]["price"] - current_price) / current_price > 0.05:
+                signal = "BUY"
+                reasoning = f"Price has significant room to run before hitting resistance at ${resistance_zones[0]['price']:.2f}."
+            # Check if price has recently broken above resistance
+            elif main_timeframe_data and main_timeframe_data.get("trend", {}).get("direction") == "uptrend":
+                signal = "BUY"
+                reasoning = "Price is in an uptrend across multiple timeframes."
+            # Check if price has recently broken below support
+            elif main_timeframe_data and main_timeframe_data.get("trend", {}).get("direction") == "downtrend":
+                signal = "SELL"
+                reasoning = "Price is in a downtrend across multiple timeframes."
+
             # Prepare result with current timestamp
             result = {
                 "support_zones": support_zones,
                 "resistance_zones": resistance_zones,
                 "summary": summary,
-                "signal": mtf_analysis.get("signal", "NEUTRAL"),
-                "reasoning": mtf_analysis.get("reasoning", "Insufficient data"),
+                "signal": signal,
+                "reasoning": reasoning,
                 "timestamp": datetime.now(UTC)
             }
-            
+
             # Store in cache for future requests
             if hasattr(self, '_mtf_cache'):
                 self._mtf_cache[cache_key] = result
-                
+
             # Format timestamp for return value
             result["timestamp"] = result["timestamp"].isoformat()
             return result
