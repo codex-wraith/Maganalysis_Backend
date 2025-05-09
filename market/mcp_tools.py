@@ -280,9 +280,10 @@ async def get_news_sentiment(symbol: str):
             
         # Get app state if not available globally
         if not market_manager:
-            app_instance = app
-            mm = app_instance.state.market_manager
-            http = app_instance.state.http
+            # Import here to avoid circular imports
+            from main import app as main_app
+            mm = main_app.state.market_manager
+            http = main_app.state.http
         else:
             mm = market_manager
             http = http_session
