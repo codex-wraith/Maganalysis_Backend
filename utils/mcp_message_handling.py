@@ -6,15 +6,8 @@ from utils.message_handling import MessageProcessor
 
 logger = logging.getLogger(__name__)
 
-def register_messaging_tools(mcp, agent):
-    """
-    Register message processing tools with MCP.
-    This completely replaces the previous MessageProcessor implementation.
-    """
-    
-    # Create a tool for streaming large responses
-    @mcp.tool()
-    async def stream_large_response(content: str, platform: str, max_chunk_size: int = 4096, delay: float = 0.5):
+# Module-level declarations for functions to be registered
+async def stream_large_response(content: str, platform: str, max_chunk_size: int = 4096, delay: float = 0.5):
         """
         Stream a large response in chunks.
         REPLACEMENT for message streaming functionality.
@@ -28,7 +21,8 @@ def register_messaging_tools(mcp, agent):
         Returns:
             A success message
         """
-        from main import app
+        from main import get_app
+        app = get_app()
         
         try:
             # Clean the message
@@ -70,8 +64,7 @@ def register_messaging_tools(mcp, agent):
             logger.error(f"Error streaming large response: {e}")
             return {"success": False, "error": str(e)}
     
-    @mcp.tool()
-    async def format_for_platform(content: str, platform: str = "web"):
+async def format_for_platform(content: str, platform: str = "web"):
         """
         Format content for a specific platform.
         

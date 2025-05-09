@@ -132,22 +132,34 @@ async def get_price_levels(symbol: str, asset_type: str = "stock", timeframe: st
         # Format levels for readability
         formatted_support = []
         for level in mtf_support_zones:
+            # Calculate distance percent if not present
+            if 'distance_percent' not in level and current_price > 0 and 'price' in level:
+                distance_percent = ((level['price'] - current_price) / current_price) * 100
+            else:
+                distance_percent = level.get('distance_percent', 0)
+                
             formatted_support.append({
                 "price": DataFormatter.format_price(level["price"]),
                 "timeframes": level["timeframes"],
                 "strength": level["strength"],
                 "confidence": level["confidence"],
-                "distance_percent": f"{level['distance_percent']:.2f}%"
+                "distance_percent": f"{distance_percent:.2f}%"
             })
             
         formatted_resistance = []
         for level in mtf_resistance_zones:
+            # Calculate distance percent if not present
+            if 'distance_percent' not in level and current_price > 0 and 'price' in level:
+                distance_percent = ((level['price'] - current_price) / current_price) * 100
+            else:
+                distance_percent = level.get('distance_percent', 0)
+                
             formatted_resistance.append({
                 "price": DataFormatter.format_price(level["price"]),
                 "timeframes": level["timeframes"],
                 "strength": level["strength"],
                 "confidence": level["confidence"],
-                "distance_percent": f"{level['distance_percent']:.2f}%"
+                "distance_percent": f"{distance_percent:.2f}%"
             })
         
         return {

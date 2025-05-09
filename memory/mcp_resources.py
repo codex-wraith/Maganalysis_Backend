@@ -5,11 +5,11 @@ from mcp_server import CUSTOM_SCHEME
 
 logger = logging.getLogger(__name__)
 
-def register_memory_resources(mcp, agent):
-    """Register memory resources with the MCP server"""
-    
-    @mcp.resource(f"{CUSTOM_SCHEME}:///memory/stats")
-    async def get_memory_stats():
+# Module-level declarations for resources to be registered
+# Global variables for agent instance
+agent = None
+
+async def get_memory_stats():
         """Get memory usage statistics"""
         try:
             stats = await agent.message_memory.get_stats()
@@ -18,8 +18,7 @@ def register_memory_resources(mcp, agent):
             logger.error(f"Error getting memory stats: {e}", exc_info=True)
             return {"error": str(e)}
     
-    @mcp.resource(f"{CUSTOM_SCHEME}:///memory/user/{{user_id}}")
-    async def get_user_memory(user_id: str):
+async def get_user_memory(user_id: str):
         """Get memory information for a specific user"""
         try:
             # Get platforms where this user has activity

@@ -7,11 +7,8 @@ from datetime import datetime, UTC
 
 logger = logging.getLogger(__name__)
 
-def register_memory_tools(mcp, agent):
-    """Register memory management tools with the MCP server"""
-    
-    @mcp.tool()
-    async def get_conversation_history(platform: str, user_id: str, limit: int = 10):
+# Module-level declarations for functions to be registered
+async def get_conversation_history(platform: str, user_id: str, limit: int = 10):
         """
         Get conversation history for a user.
         
@@ -54,8 +51,7 @@ def register_memory_tools(mcp, agent):
                 "history": []
             }
     
-    @mcp.tool()
-    async def add_memory_conversation_to_context(context: Any, platform: str, user_id: str, limit: int = 10):
+async def add_memory_conversation_to_context(context: Any, platform: str, user_id: str, limit: int = 10):
         """
         Add conversation history to an MCP context.
         
@@ -107,8 +103,7 @@ def register_memory_tools(mcp, agent):
                 "messages_added": 0
             }
     
-    @mcp.tool()
-    async def clear_user_memory(platform: str, user_id: str):
+async def clear_user_memory(platform: str, user_id: str):
         """
         Clear a user's conversation history.
         

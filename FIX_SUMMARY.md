@@ -1,137 +1,146 @@
-# Fix for ImportError in aiagent.py
+# Maganalysis Backend Fixes Summary
 
-## Problems
+## Core Issues Addressed
 
-### Problem 1: ImportError for MCP Tools
+1. **ImportError for MCP Tools**: Fixed the problem where tools registered with MCP couldn't be imported directly from their module files.
 
-The application was encountering an `ImportError` when trying to import MCP tools directly from their module files:
+2. **AttributeError for FastMCP 'tools'**: Resolved issues with the `mcp.tools.<tool_name>()` access pattern.
 
+3. **Circular Import Problems**: Eliminated circular dependencies between:
+   - main.py
+   - mcp_server.py
+   - market/mcp_tools.py
+   - market/mcp_price_levels.py
+   - market/mcp_multi_timeframe.py
+   - memory/mcp_tools.py
+   - memory/mcp_resources.py
+   - utils/mcp_message_handling.py
+
+4. **Parameter Mismatch Errors**:
+   - Fixed `http_session` parameter being passed to functions that didn't accept it
+   - Fixed `include_fibonacci` and `include_psychological` parameters being passed incorrectly
+   - Fixed KeyError for 'distance_percent' in price level data
+
+## Fix Implementation Details
+
+### 1. Module Structure Changes
+
+The key pattern implemented across all MCP tool modules:
+
+1. Move function definitions to module level (outside registration functions)
+2. Remove `@mcp.tool()` decorators from function definitions
+3. Create global variables to store references to dependencies
+4. Register functions with MCP inside the registration functions
+5. Use dynamic imports to avoid circular imports
+
+Example:
+```python
+# Before
+def register_market_tools(mcp, app, market_manager_instance, http_session_instance, agent_instance):
+    @mcp.tool()
+    async def get_technical_indicators(symbol: str, ...):
+        # function implementation
+        
+# After
+# 1. Global variables for dependencies
+market_manager = None
+http_session = None
+
+# 2. Module-level function definitions
+async def get_technical_indicators(symbol: str, ...):
+    # function implementation
+
+# 3. Registration function
+def register_market_tools(mcp_instance, app_instance, market_manager_instance, http_session_instance, agent_instance):
+    global market_manager, http_session
+    market_manager = market_manager_instance
+    http_session = http_session_instance
+    
+    # 4. Register functions with MCP
+    mcp_instance.tool()(get_technical_indicators)
 ```
-ImportError: cannot import name 'get_technical_indicators' from 'market.mcp_tools' (/app/market/mcp_tools.py)
+
+### 2. Main Application Access
+
+Added a global app instance tracker in main.py:
+
+```python
+# Global variable to hold app instance
+_app_instance = None
+
+def get_app():
+    """Get the FastAPI app instance for use by other modules"""
+    global _app_instance
+    return _app_instance
 ```
 
-This occurred because these functions were registered as MCP tools *inside* registration functions and were not available as top-level module imports.
+This allows other modules to access the app instance without circular imports:
 
-### Problem 2: AttributeError for MCP Tools Access
-
-After implementing the initial fix by switching to `mcp.tools.<tool_name>()` calls, we encountered a different error:
-
-```
-AttributeError: 'FastMCP' object has no attribute 'tools'
+```python
+from main import get_app
+app = get_app()
 ```
 
-This occurred because the MCP instance in the app doesn't support the `tools` attribute pattern or isn't properly initialized for direct tool calls (`app.state.mcp = None` in main.py).
+### 3. Error Handling Improvements
 
-### Problem 3: Circular Import Issues
+Added specific error handling for common issues:
 
-After implementing our solution with module-level functions, we encountered circular import errors:
+1. **Missing Data Handling**:
+   - Added fallback calculations for missing fields like 'distance_percent'
+   - Added proper null checks before accessing nested data
 
-```
-ImportError: cannot import name 'app' from partially initialized module 'main' (most likely due to a circular import) (/app/main.py)
-```
-
-This occurred because of interdependencies between main.py, mcp_server.py, and the MCP tool modules.
-
-### Problem 4: Incorrect Method Parameters
-
-After deploying the code, we encountered errors related to method parameters:
-
-```
-TypeError: MarketManager.get_intraday_data() got an unexpected keyword argument 'http_session'
-```
-
-This occurred because the `get_intraday_data` method in the `MarketManager` class doesn't accept an `http_session` parameter, unlike other methods in the same class.
-
-### Problem 5: Unexpected Function Arguments
-
-We also encountered another parameter-related error:
-
-```
-TypeError: PriceLevelAnalyzer.identify_support_levels() got an unexpected keyword argument 'include_fibonacci'
-```
-
-This occurred because we were passing `include_fibonacci` and `include_psychological` parameters to the `identify_support_levels` and `identify_resistance_levels` methods, but these methods don't accept these parameters.
-
-## Solution
-
-After several iterations, our final solution involved:
-
-1. **Moving function definitions to module level without decorators**: 
-   - Moved function implementations from inside registration functions to module level
-   - Removed `@mcp.tool()` decorators from the module level to avoid import cycles
-   - Added direct imports for dependencies between module files
-   - Registered functions with MCP inside registration functions
-
-2. **Creating a global app access mechanism**:
-   - Added `get_app()` function to main.py
-   - Made app instance accessible globally for module-level functions
-   - Added global dependencies (market_manager, http_session) in each module
-
-3. **Using direct function calls in aiagent.py**:
-   - Imported functions directly from their module files
-   - Changed all calls to use direct function calls
-   - Added proper parameter names for clarity
-
-4. **Resolving circular import issues**:
-   - Removed direct imports of `mcp`, `app` and `get_app` from module files
-   - Added dynamic imports inside functions where needed
-   - Used import aliases (`import app as main_app`) to avoid conflicts
-   - Replaced global references with function-scoped imports
-   - Moved all MCP-related imports to registration functions
-
-5. **Fixing method parameter inconsistencies**:
-   - Removed `http_session` parameter from calls to `get_intraday_data`
-   - Kept `http_session` parameter for methods that explicitly accept it
-   - Relied on the internal HTTP session of MarketManager where needed
-
-6. **Removing unsupported parameters**:
-   - Removed `include_fibonacci` and `include_psychological` parameters from calls to `identify_support_levels` and `identify_resistance_levels`
-   - Ensured method calls match parameter signatures in the PriceLevelAnalyzer class
-   - Fixed all higher timeframe analysis code to use the correct method signatures
+2. **Parameter Validation**:
+   - Improved parameter handling to work correctly with or without optional parameters
 
 ## Files Modified
 
-- `/mnt/c/Users/DefiSorce/Desktop/Maganalysis Project/Maganalysis Backend/aiagent.py`
-- `/mnt/c/Users/DefiSorce/Desktop/Maganalysis Project/Maganalysis Backend/main.py`
-- `/mnt/c/Users/DefiSorce/Desktop/Maganalysis Project/Maganalysis Backend/market/mcp_tools.py`
-- `/mnt/c/Users/DefiSorce/Desktop/Maganalysis Project/Maganalysis Backend/market/mcp_price_levels.py`
-- `/mnt/c/Users/DefiSorce/Desktop/Maganalysis Project/Maganalysis Backend/market/mcp_multi_timeframe.py`
+1. **market/mcp_tools.py**: Restructured tool functions, fixed registration pattern
+2. **market/mcp_price_levels.py**: Fixed parameter usage, added distance percent calculation
+3. **market/mcp_multi_timeframe.py**: Updated to match new pattern
+4. **memory/mcp_tools.py**: Restructured using same pattern as market tools
+5. **memory/mcp_resources.py**: Updated resource registration
+6. **utils/mcp_message_handling.py**: Fixed circular import, updated registration
+7. **main.py**: Added global app instance access
+8. **aiagent.py**: Updated to use new functions and patterns
 
-## Key Changes
+## Technical Approach Details
 
-### 1. In module files (mcp_tools.py, mcp_price_levels.py, mcp_multi_timeframe.py):
+### Avoiding Circular Imports
 
-- Moved function implementations outside registration functions to module level
-- Added global variables for dependencies (market_manager, http_session)
-- Added init_global_dependencies() function to initialize globals
-- Updated registration functions to just store dependencies instead of defining functions
-- Modified functions to work with direct calling pattern
+The key strategy was to remove implicit dependencies on imports at module level:
 
-### 2. In main.py:
+1. **Dynamic Imports**: Use imports inside functions rather than at module level
+2. **Global Variables**: Store references to shared objects (app, market_manager, etc.)
+3. **Registration Process**: Clear separation between function definition and registration
 
-- Added global variable to track app instance (`_app_instance`)
-- Added get_app() function to provide access to app instance
-- Modified lifespan function to set global app instance
+### Function Access Pattern
 
-### 3. In aiagent.py:
+For consistent function access:
 
-- Updated imports to import functions directly from module files
-- Modified all function calls to use direct imports instead of mcp.tools pattern
-- Updated function parameter names for clarity (often needed for analyze_multi_timeframe)
+1. **Import directly from module**: 
+   ```python
+   from market.mcp_tools import get_technical_indicators
+   ```
 
-## Implementation Details
+2. **Call directly**:
+   ```python
+   result = await get_technical_indicators(symbol="AAPL", asset_type="stock")
+   ```
 
-The strategy we implemented ensures that:
+### Error Handling for Missing Data
 
-1. MCP tools are still properly registered with MCP inside registration functions
-2. Functions are available for direct import and calling as regular Python functions without MCP dependencies
-3. App state dependencies are accessible to module-level functions
-4. Code maintains its original functionality but with a different invocation pattern
-5. Registration functions now handle both dependency storage and MCP registration
-6. Circular import issues are resolved by moving all MCP-related imports to registration functions
+Added defensive programming patterns:
+```python
+# Calculate distance percent if not present
+if 'distance_percent' not in level and current_price > 0 and 'price' in level:
+    distance_percent = ((level['price'] - current_price) / current_price) * 100
+else:
+    distance_percent = level.get('distance_percent', 0)
+```
 
-This approach provides the best of both worlds: MCP registration for external tool access, and direct function calling for internal use, while completely avoiding import cycles.
+## Next Steps
 
-## Testing
-
-The code should now be able to run without the ImportError or AttributeError previously encountered. All tool functionality should work as before but with the improved calling pattern.
+1. Review other parts of the codebase for similar patterns that might need fixing
+2. Update documentation to reflect new patterns
+3. Consider adding automated tests to catch these issues earlier
+EOF < /dev/null
