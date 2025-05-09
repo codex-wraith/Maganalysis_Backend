@@ -144,3 +144,25 @@ else:
 2. Update documentation to reflect new patterns
 3. Consider adding automated tests to catch these issues earlier
 EOF < /dev/null
+
+## Additional Fixes - May 8, 2025
+
+After deploying the initial fixes, we encountered an issue with the ImportError for 'register_memory_tools' from memory/mcp_tools.py. This occurred because while we had moved the function definitions to module level, we forgot to add the registration functions in some modules.
+
+### Additional Files Fixed:
+
+1. **memory/mcp_tools.py**: Added the missing `register_memory_tools` function that was previously modified but not fully implemented.
+2. **memory/mcp_resources.py**: Fixed indentation and added the missing `register_memory_resources` function.
+3. **utils/mcp_message_handling.py**: Fixed indentation and added the missing `register_messaging_tools` function.
+
+This completes our implementation of the consistent module structure pattern across all MCP-related modules:
+
+1. Module-level function definitions
+2. Global variables for dependencies
+3. Registration functions that:
+   - Take `mcp_instance` and other dependencies as parameters
+   - Set global variables
+   - Register functions with MCP
+
+With these additional fixes, all MCP-related modules should now follow the same pattern and avoid the circular import issues.
+EOF < /dev/null
