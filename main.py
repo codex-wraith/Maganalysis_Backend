@@ -24,6 +24,14 @@ from mcp_server import mcp
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Global variable to hold app instance
+_app_instance = None
+
+def get_app():
+    """Get the FastAPI app instance for use by other modules"""
+    global _app_instance
+    return _app_instance
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
@@ -32,6 +40,10 @@ async def lifespan(app: FastAPI):
     """
     # Startup
     try:
+        # Set global app instance for module-level access
+        global _app_instance
+        _app_instance = app
+        
         # Initialize basic services
         redis_url = os.environ.get('REDISCLOUD_URL')
         if not redis_url:

@@ -8,45 +8,77 @@ The application was encountering an `ImportError` when trying to import MCP tool
 ImportError: cannot import name 'get_technical_indicators' from 'market.mcp_tools' (/app/market/mcp_tools.py)
 ```
 
-This occurred because these functions are registered as MCP tools *inside* registration functions and are not available as top-level module imports.
+This occurred because these functions were registered as MCP tools *inside* registration functions and were not available as top-level module imports.
+
+After implementing the initial fix by switching to `mcp.tools.<tool_name>()` calls, we encountered a different error:
+
+```
+AttributeError: 'FastMCP' object has no attribute 'tools'
+```
+
+This occurred because the MCP instance in the app doesn't support the `tools` attribute pattern or isn't properly initialized for direct tool calls (`app.state.mcp = None` in main.py).
 
 ## Solution
 
-The fix involved two main changes:
+Our final solution involved:
 
-1. **Removed direct imports of MCP tools**:
-   - Removed `get_technical_indicators`, `get_news_sentiment`, `get_raw_market_data` from `market.mcp_tools`
-   - Removed `get_price_levels` from `market.mcp_price_levels`
-   - Removed `analyze_multi_timeframe` from `market.mcp_multi_timeframe`
-   - Kept `add_market_analysis_to_context` from `market.mcp_tools` as it's used as a helper function
+1. **Moving tool function definitions to module level**: 
+   - Moved the tool function implementations from inside registration functions to module level
+   - Kept the MCP decorators (`@mcp.tool()`) to register them with MCP
+   - Added direct imports for dependencies between module files
 
-2. **Modified all function calls to use the MCP instance**:
-   - Changed all direct calls to these functions to use the pattern `mcp.tools.<tool_name>()`
-   - Updated function calls to use named parameters for clarity
-   - Example: `get_technical_indicators(symbol, asset_type, interval)` → `mcp.tools.get_technical_indicators(symbol=symbol, asset_type=asset_type, timeframe=interval)`
+2. **Creating a global app access mechanism**:
+   - Added `get_app()` function to main.py
+   - Made app instance accessible globally for module-level functions
+   - Added global dependencies (market_manager, http_session) in each module
+
+3. **Using direct function calls in aiagent.py**:
+   - Imported functions directly from their module files
+   - Changed all calls to use direct function calls instead of `mcp.tools.<tool_name>()`
+   - Added proper parameter names for clarity
 
 ## Files Modified
 
 - `/mnt/c/Users/DefiSorce/Desktop/Maganalysis Project/Maganalysis Backend/aiagent.py`
+- `/mnt/c/Users/DefiSorce/Desktop/Maganalysis Project/Maganalysis Backend/main.py`
+- `/mnt/c/Users/DefiSorce/Desktop/Maganalysis Project/Maganalysis Backend/market/mcp_tools.py`
+- `/mnt/c/Users/DefiSorce/Desktop/Maganalysis Project/Maganalysis Backend/market/mcp_price_levels.py`
+- `/mnt/c/Users/DefiSorce/Desktop/Maganalysis Project/Maganalysis Backend/market/mcp_multi_timeframe.py`
 
-## Affected Methods
+## Key Changes
 
-The following methods in `CipherAgent` class were updated:
-- `enhance_with_sentiment`
-- `analyze_asset`
-- `_fetch_real_time_price`
-- `_analyze_timeframe`
-- `_fetch_market_data`
-- `_analyze_multi_timeframe_levels`
-- `process_trend_following_strategy`
-- `generate_market_strategy`
-- `search_for_asset`
+### 1. In module files (mcp_tools.py, mcp_price_levels.py, mcp_multi_timeframe.py):
+
+- Moved function implementations outside registration functions to module level
+- Added global variables for dependencies (market_manager, http_session)
+- Added init_global_dependencies() function to initialize globals
+- Updated registration functions to just store dependencies instead of defining functions
+- Modified functions to work with direct calling pattern
+
+### 2. In main.py:
+
+- Added global variable to track app instance (`_app_instance`)
+- Added get_app() function to provide access to app instance
+- Modified lifespan function to set global app instance
+
+### 3. In aiagent.py:
+
+- Updated imports to import functions directly from module files
+- Modified all function calls to use direct imports instead of mcp.tools pattern
+- Updated function parameter names for clarity (often needed for analyze_multi_timeframe)
+
+## Implementation Details
+
+The strategy we implemented ensures that:
+
+1. MCP tools are still properly registered with MCP via decorators
+2. Functions are available for direct import and calling as regular Python functions
+3. App state dependencies are accessible to module-level functions
+4. Code maintains its original functionality but with a different invocation pattern
+5. Registration functions still exist but are simplified to just store dependencies
+
+This approach provides the best of both worlds: MCP registration for external tool access, and direct function calling for internal use.
 
 ## Testing
 
-The changes were tested to ensure:
-1. The import structure is correct
-2. The MCP tool calls follow the correct pattern with named parameters
-3. All necessary functions are called through the MCP instance
-
-These changes ensure that the code now properly uses the MCP tools through the MCP instance rather than trying to directly import them as Python module functions.
+The code should now be able to run without the ImportError or AttributeError previously encountered. All tool functionality should work as before but with the improved calling pattern.
