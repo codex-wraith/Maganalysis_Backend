@@ -4,7 +4,7 @@ import logging
 import asyncio
 import re
 import pandas as pd
-from datetime import datetime, UTC
+from datetime import datetime, timedelta, UTC
 from typing import Dict, List, Any, Optional, Tuple, Union
 
 # Import MCP components
@@ -179,11 +179,8 @@ class CipherAgent:
         Returns:
             The AI response
         """
-        # Access datetime from the global module to avoid shadowing issues
-        import sys
-        dt_module = sys.modules['datetime']
-        dt = dt_module.datetime
-        utc = dt_module.UTC
+        # Using datetime module imported at the top level of the file
+        # No need for local imports that might cause shadowing issues
 
         try:
             # Process user message for storage
@@ -191,7 +188,7 @@ class CipherAgent:
                 "text": text,
                 "platform": platform or "web",
                 "user_id": user_id or "anonymous",
-                "timestamp": dt.now(utc).isoformat(),
+                "timestamp": datetime.now(UTC).isoformat(),
                 "context": context or {}
             }
             
@@ -310,7 +307,7 @@ class CipherAgent:
 
                     # Add time filtering based on the time_filter value
                     # Convert logical time filters to specific date ranges
-                    from datetime import datetime, timedelta, UTC
+                    # Using datetime modules imported at the top level
 
                     now = datetime.now(UTC)
 
@@ -414,7 +411,7 @@ class CipherAgent:
                                         # Format timestamp for better readability
                                         try:
                                             # Try to parse and reformat the timestamp
-                                            from datetime import datetime
+                                            # Using datetime imported at the top level
                                             dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
                                             display_time = dt.strftime("%Y-%m-%d %H:%M")
                                         except:
@@ -484,7 +481,7 @@ class CipherAgent:
                                         # Format timestamp for better readability
                                         try:
                                             # Try to parse and reformat the timestamp
-                                            from datetime import datetime
+                                            # Using datetime imported at the top level
                                             dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
                                             display_time = dt.strftime("%Y-%m-%d %H:%M")
                                         except:
