@@ -1876,24 +1876,28 @@ class CipherAgent:
 
                 # Add all main timeframe levels with their source
                 for level in main_support:
+                    # Use .get() with default values to handle missing keys
+                    price = level.get("price", 0)
                     level_info = {
-                        "price": level["price"],
-                        "strength": level["strength"],
+                        "price": price,
+                        "strength": level.get("strength", 1.0),  # Default to 1.0 if missing
                         "type": "support",
                         "timeframes": [main_interval]
                     }
                     all_levels.append(level_info)
-                    timeframe_levels[f"{level['price']:.2f}"] = level_info
+                    timeframe_levels[f"{price:.2f}"] = level_info
 
                 for level in main_resistance:
+                    # Use .get() with default values to handle missing keys
+                    price = level.get("price", 0)
                     level_info = {
-                        "price": level["price"],
-                        "strength": level["strength"],
+                        "price": price,
+                        "strength": level.get("strength", 1.0),  # Default to 1.0 if missing
                         "type": "resistance",
                         "timeframes": [main_interval]
                     }
                     all_levels.append(level_info)
-                    timeframe_levels[f"{level['price']:.2f}"] = level_info
+                    timeframe_levels[f"{price:.2f}"] = level_info
 
             # Then analyze higher timeframes
             for higher_tf in higher_timeframes:
@@ -1905,18 +1909,21 @@ class CipherAgent:
 
                     # Process support levels from this timeframe
                     for level in tf_support:
-                        price_key = f"{level['price']:.2f}"
+                        price = level.get("price", 0)
+                        price_key = f"{price:.2f}"
+                        strength = level.get("strength", 1.0)  # Default to 1.0 if missing
+
                         if price_key in timeframe_levels:
                             # Update existing level
                             existing = timeframe_levels[price_key]
-                            existing["strength"] += level["strength"] * 0.8  # Higher timeframes get 80% weight
+                            existing["strength"] += strength * 0.8  # Higher timeframes get 80% weight
                             if higher_tf not in existing["timeframes"]:
                                 existing["timeframes"].append(higher_tf)
                         else:
                             # Add new level
                             level_info = {
-                                "price": level["price"],
-                                "strength": level["strength"] * 0.8,  # Higher timeframes get 80% weight
+                                "price": price,
+                                "strength": strength * 0.8,  # Higher timeframes get 80% weight
                                 "type": "support",
                                 "timeframes": [higher_tf]
                             }
@@ -1925,18 +1932,21 @@ class CipherAgent:
 
                     # Process resistance levels from this timeframe
                     for level in tf_resistance:
-                        price_key = f"{level['price']:.2f}"
+                        price = level.get("price", 0)
+                        price_key = f"{price:.2f}"
+                        strength = level.get("strength", 1.0)  # Default to 1.0 if missing
+
                         if price_key in timeframe_levels:
                             # Update existing level
                             existing = timeframe_levels[price_key]
-                            existing["strength"] += level["strength"] * 0.8  # Higher timeframes get 80% weight
+                            existing["strength"] += strength * 0.8  # Higher timeframes get 80% weight
                             if higher_tf not in existing["timeframes"]:
                                 existing["timeframes"].append(higher_tf)
                         else:
                             # Add new level
                             level_info = {
-                                "price": level["price"],
-                                "strength": level["strength"] * 0.8,  # Higher timeframes get 80% weight
+                                "price": price,
+                                "strength": strength * 0.8,  # Higher timeframes get 80% weight
                                 "type": "resistance",
                                 "timeframes": [higher_tf]
                             }
@@ -1996,7 +2006,8 @@ class CipherAgent:
             # Add key support levels
             summary += "\nKey Support Levels (across timeframes):\n"
             for zone in support_zones[:3]:  # Top 3 support zones
-                if "price" in zone and zone["price"] < current_price:
+                price = zone.get("price", 0)
+                if price < current_price:
                     # Format timeframes for display
                     timeframes_data = zone.get("timeframes", [])
                     if isinstance(timeframes_data, list):
@@ -2007,12 +2018,13 @@ class CipherAgent:
                         timeframes = str(timeframes_data)
 
                     strength = zone.get('strength', 0)
-                    summary += f"- ${zone['price']:.2f} (strength: {strength:.1f}, timeframes: {timeframes})\n"
+                    summary += f"- ${price:.2f} (strength: {strength:.1f}, timeframes: {timeframes})\n"
 
             # Add key resistance levels
             summary += "\nKey Resistance Levels (across timeframes):\n"
             for zone in resistance_zones[:3]:  # Top 3 resistance zones
-                if "price" in zone and zone["price"] > current_price:
+                price = zone.get("price", 0)
+                if price > current_price:
                     # Format timeframes for display
                     timeframes_data = zone.get("timeframes", [])
                     if isinstance(timeframes_data, list):
@@ -2023,7 +2035,7 @@ class CipherAgent:
                         timeframes = str(timeframes_data)
 
                     strength = zone.get('strength', 0)
-                    summary += f"- ${zone['price']:.2f} (strength: {strength:.1f}, timeframes: {timeframes})\n"
+                    summary += f"- ${price:.2f} (strength: {strength:.1f}, timeframes: {timeframes})\n"
 
             # Determine overall signal based on price position relative to levels
             signal = "NEUTRAL"
