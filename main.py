@@ -214,7 +214,7 @@ async def get_market_overview():
         sentiment_score = None
         article_count = 0
         market_article_count = 0
-        
+
         # Initialize variables to None to indicate no data available
         market_mood = None
         sentiment_score = None
@@ -224,27 +224,27 @@ async def get_market_overview():
         article_count = 0
         top_stocks_data = {"gainers": [], "most_actively_traded": []}
         indices_data = []
-            
+
         # Get overall market sentiment
         try:
             market_sentiment = await mm.get_news_sentiment(
-                topics="financial_markets", 
+                topics="financial_markets",
                 limit=50
             )
-            
+
             if market_sentiment and "feed" in market_sentiment:
                 market_articles = market_sentiment["feed"]
                 market_article_count = len(market_articles)
-                
+
                 if market_article_count > 0:
                     market_total_score = 0
                     for article in market_articles:
                         score = article.get("overall_sentiment_score", 0)
                         market_total_score += score
-                    
+
                     market_avg_score = market_total_score / market_article_count
                     sentiment_score = (market_avg_score + 1) * 50
-                    
+
                     if sentiment_score > 65:
                         market_mood = "bullish"
                     elif sentiment_score < 35:
@@ -253,41 +253,35 @@ async def get_market_overview():
                         market_mood = "neutral"
         except Exception as e:
             logger.error(f"Error fetching market sentiment: {e}")
-        
-        # Get Bitcoin sentiment
-        try:
-            btc_sentiment = await mm.get_news_sentiment(ticker="BTC")
-            
-            if btc_sentiment and "feed" in btc_sentiment:
-                articles = btc_sentiment["feed"]
-                article_count = len(articles)
-                
-                if article_count > 0:
-                    total_score = 0
-                    for article in articles:
-                        score = article.get("overall_sentiment_score", 0)
-                        total_score += score
-                    
-                    avg_score = total_score / article_count
-                    btc_score = (avg_score + 1) * 50
-                    
-                    if btc_score > 65:
-                        btc_mood = "bullish"
-                    elif btc_score < 35:
-                        btc_mood = "bearish"
-                    else:
-                        btc_mood = "neutral"
-            
-            # Add to crypto data
-            crypto_data.append({
-                "symbol": "BTC",
-                "name": "Bitcoin",
-                "price": btc_score,
-                "change_percent": btc_mood
-            })
-        except Exception as e:
-            logger.error(f"Error fetching crypto sentiment: {e}")
-        
+
+        # Get cryptocurrency data (price + sentiment)
+        crypto_symbols = [("BTC", "Bitcoin"), ("ETH", "Ethereum"), ("SOL", "Solana")]
+
+        for symbol, name in crypto_symbols:
+            try:
+                crypto_info = await mm.get_crypto_dashboard_data(symbol_upper=symbol)
+                crypto_info["name"] = name # Assign full name
+                crypto_data.append(crypto_info)
+            except Exception as e:
+                logger.error(f"Error fetching dashboard data for crypto {symbol}: {e}")
+                crypto_data.append({
+                    "symbol": symbol,
+                    "name": name,
+                    "price": 0,
+                    "change_percent_str": "N/A",
+                    "price_direction": "neutral",
+                    "sentiment_score": 50,
+                    "sentiment_label": "NEUTRAL",
+                    "sentiment_mood_direction": "neutral"
+                })
+
+        # Store Bitcoin sentiment for backward compatibility
+        if crypto_data and len(crypto_data) > 0:
+            btc_data = next((c for c in crypto_data if c["symbol"] == "BTC"), None)
+            if btc_data:
+                btc_score = btc_data["sentiment_score"]
+                btc_mood = btc_data["sentiment_label"].lower()
+
         # Get top stocks data (gainers, losers, most active)
         try:
             top_stocks_data = await mm.get_top_gainers_losers()
@@ -296,7 +290,7 @@ async def get_market_overview():
         except Exception as e:
             logger.error(f"Error fetching top stocks: {e}")
             top_stocks_data = {"gainers": [], "most_actively_traded": []}
-            
+
         # Get major stock indices (S&P 500, DOW, NASDAQ, etc.)
         try:
             index_quotes_result = await mm.get_index_quotes()

@@ -404,19 +404,92 @@ class MarketManager:
         
         return {"indices": indices}
         
+    async def get_crypto_dashboard_data(self, symbol_upper: str, market: str = "USD") -> Dict:
+        """
+        Fetch both price data and sentiment data for a given crypto symbol.
+        Returns a combined data object with price, change percentage, and sentiment information.
+
+        Parameters:
+            symbol_upper (str): The cryptocurrency symbol (e.g., "BTC")
+            market (str): The market to fetch data for (default: "USD")
+
+        Returns:
+            Dict: Combined price and sentiment data
+        """
+        price_data = {"price": 0.0, "change_percent_val": 0.0, "change_percent_str": "0.00%", "direction": "neutral"}
+        sentiment_data = {"score": 50.0, "label": "NEUTRAL", "mood_direction": "neutral"}
+
+        # Fetch Price Data (e.g., daily)
+        try:
+            # Using get_crypto_daily for price and change
+            raw_price_info = await self.get_crypto_daily(symbol=symbol_upper, market=market)
+            if raw_price_info and "Time Series (Digital Currency Daily)" in raw_price_info:
+                time_series = raw_price_info["Time Series (Digital Currency Daily)"]
+                latest_date = sorted(time_series.keys(), reverse=True)[0]
+                latest_candle = time_series[latest_date]
+
+                current_price = float(latest_candle.get("4a. close (USD)", 0.0))
+                price_data["price"] = current_price
+
+                if len(time_series.keys()) > 1:
+                    prev_date = sorted(time_series.keys(), reverse=True)[1]
+                    prev_close = float(time_series[prev_date].get("4a. close (USD)", 0.0))
+                    if prev_close != 0:
+                        change = current_price - prev_close
+                        change_p = (change / prev_close) * 100
+                        price_data["change_percent_val"] = change_p
+                        price_data["change_percent_str"] = f"{'+' if change_p >= 0 else ''}{change_p:.2f}%"
+                        price_data["direction"] = "up" if change_p >=0 else "down"
+                    else:
+                         price_data["direction"] = "neutral"
+                else:
+                    price_data["direction"] = "neutral"
+        except Exception as e:
+            logger.error(f"Error fetching price data for {symbol_upper}: {e}")
+
+        # Fetch Sentiment Data
+        try:
+            raw_sentiment_info = await self.get_news_sentiment(ticker=symbol_upper) # Alpha Vantage uses "BTC", "ETH", "SOL"
+            if raw_sentiment_info and "feed" in raw_sentiment_info and raw_sentiment_info["feed"]:
+                articles = raw_sentiment_info["feed"]
+                article_count = len(articles)
+                if article_count > 0:
+                    total_score = sum(article.get("overall_sentiment_score", 0) for article in articles)
+                    avg_score = total_score / article_count
+                    sentiment_data["score"] = (avg_score + 1) * 50 # Normalize to 0-100
+
+                    if sentiment_data["score"] > 65: sentiment_data["label"] = "Bullish"
+                    elif sentiment_data["score"] < 35: sentiment_data["label"] = "Bearish"
+                    sentiment_data["mood_direction"] = "up" if sentiment_data["score"] > 55 else ("down" if sentiment_data["score"] < 45 else "neutral")
+
+        except Exception as e:
+            logger.error(f"Error fetching sentiment for {symbol_upper}: {e}")
+
+        return {
+            "symbol": symbol_upper,
+            "name": symbol_upper, # You can map this to full names like "Bitcoin"
+            "price": price_data["price"],
+            "change_percent_val": price_data["change_percent_val"],
+            "change_percent_str": price_data["change_percent_str"],
+            "price_direction": price_data["direction"],
+            "sentiment_score": sentiment_data["score"],
+            "sentiment_label": sentiment_data["label"],
+            "sentiment_mood_direction": sentiment_data["mood_direction"]
+        }
+
     async def get_news_sentiment(self, ticker: str = None, topics: str = None, time_from: str = None, limit: int = 100, http_session: aiohttp.ClientSession = None) -> Dict:
         """
         Retrieve news sentiment data for a specified ticker and/or topics.
-        
+
         This endpoint provides real-time and historical news articles with sentiment scores
         specifically for stocks and cryptocurrencies or broader market topics.
-        
+
         Parameters:
             ticker (str, optional): The ticker symbol (e.g., "BTC" or "TSLA")
             topics (str, optional): Comma-separated list of topics (e.g., "financial_markets,economy_macro")
             time_from (str, optional): UTC timestamp (e.g., "20220410T000000") for the starting point of time range
             limit (int): Number of items to return (default: 100, max: 1000)
-            
+
         Returns:
             Dict: News articles with sentiment scores
         """
@@ -425,7 +498,7 @@ class MarketManager:
             "sort": "LATEST",  # Get most recent articles first
             "limit": limit
         }
-        
+
         # Add ticker parameter if provided
         if ticker:
             # Format ticker to handle cryptocurrencies
@@ -434,13 +507,13 @@ class MarketManager:
             if ticker in ["BTC", "ETH", "DOGE", "LTC", "ADA", "AVAX", "BNB", "XRP", "SOL", "DOT"]:
                 formatted_ticker = f"CRYPTO:{ticker}"
             params["tickers"] = formatted_ticker
-            
+
         # Add topics parameter if provided
         if topics:
             params["topics"] = topics
-            
+
         if time_from:
             params["time_from"] = time_from
-            
+
         data = await self._fetch_alpha_data(params)
         return data
