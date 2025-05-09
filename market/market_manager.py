@@ -439,9 +439,9 @@ class MarketManager:
                         latest_date = dates[0]
                         prev_date = dates[1]
 
-                        # Use yesterday's close for comparison with today's close
-                        latest_close = float(time_series[latest_date].get("4a. close (USD)", 0.0))
-                        prev_close = float(time_series[prev_date].get("4a. close (USD)", 0.0))
+                        # Use the "4. close" key for the JSON response
+                        latest_close = float(time_series[latest_date].get("4. close", 0.0))
+                        prev_close = float(time_series[prev_date].get("4. close", 0.0))
 
                         # Add detailed logging
                         logger.info(f"Crypto {symbol_upper} data - Latest date: {latest_date}, Latest close: {latest_close}")
