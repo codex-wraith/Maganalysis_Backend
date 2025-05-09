@@ -9,9 +9,10 @@ from datetime import datetime, UTC
 from mcp.server.fastmcp.exceptions import ToolError
 from mcp_server import mcp
 
-# Import required app state
-from main import app, get_app
+# Import tools we need directly
 from market.mcp_tools import get_technical_indicators, get_raw_market_data
+# We'll use these later but can't import directly due to circular imports
+# app and get_app will be imported only when needed
 
 logger = logging.getLogger(__name__)
 
@@ -25,9 +26,12 @@ def init_global_dependencies():
     # Get app state if not already initialized
     if not market_manager or not http_session:
         try:
+            # Import here to avoid circular import
+            from main import get_app
             app_instance = get_app()
-            market_manager = app_instance.state.market_manager
-            http_session = app_instance.state.http
+            if app_instance:
+                market_manager = app_instance.state.market_manager
+                http_session = app_instance.state.http
         except Exception as e:
             logger.error(f"Failed to initialize global dependencies: {e}")
             # Will use parameters passed to register_market_tools instead

@@ -15,8 +15,8 @@ logger = logging.getLogger(__name__)
 # Module-level MCP tool definitions
 # These functions are available for direct import and for MCP registration
 
-# Import required app state
-from main import app, get_app
+# We'll use these later but can't import directly due to circular imports
+# app and get_app will be imported only when needed
 
 # Global variables for accessing app state
 market_manager = None
@@ -28,9 +28,12 @@ def init_global_dependencies():
     # Get app state if not already initialized
     if not market_manager or not http_session:
         try:
+            # Import here to avoid circular import
+            from main import get_app
             app_instance = get_app()
-            market_manager = app_instance.state.market_manager
-            http_session = app_instance.state.http
+            if app_instance:
+                market_manager = app_instance.state.market_manager
+                http_session = app_instance.state.http
         except Exception as e:
             logger.error(f"Failed to initialize global dependencies: {e}")
             # Will use parameters passed to register_market_tools instead
@@ -58,14 +61,17 @@ async def get_raw_market_data(symbol: str, asset_type: str = "stock", timeframe:
             
         # Get app state if not available globally
         if not market_manager:
-            app_instance = app
-            mm = app_instance.state.market_manager
-            http = app_instance.state.http
-            cache = app_instance.state.cache
+            # Import here to avoid circular imports
+            from main import app as main_app
+            mm = main_app.state.market_manager
+            http = main_app.state.http
+            cache = main_app.state.cache
         else:
             mm = market_manager
             http = http_session
-            cache = app.state.cache
+            # Import app only when needed
+            from main import app as main_app
+            cache = main_app.state.cache
         
         # Determine if this is a crypto symbol
         is_crypto = asset_type.lower() == "crypto"
@@ -392,9 +398,9 @@ async def search_market_information(query: str, search_type: str = "web"):
         Dictionary containing search results and sources
     """
     try:
-        # Get app instance with agent access
-        app_instance = app
-        agent = app_instance.state.agent
+        # Import here to avoid circular imports
+        from main import app as main_app
+        agent = main_app.state.agent
         
         # Validate search type
         if search_type not in ["web", "news"]:

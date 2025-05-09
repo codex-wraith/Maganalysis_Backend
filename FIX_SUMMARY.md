@@ -1,6 +1,8 @@
 # Fix for ImportError in aiagent.py
 
-## Problem
+## Problems
+
+### Problem 1: ImportError for MCP Tools
 
 The application was encountering an `ImportError` when trying to import MCP tools directly from their module files:
 
@@ -10,6 +12,8 @@ ImportError: cannot import name 'get_technical_indicators' from 'market.mcp_tool
 
 This occurred because these functions were registered as MCP tools *inside* registration functions and were not available as top-level module imports.
 
+### Problem 2: AttributeError for MCP Tools Access
+
 After implementing the initial fix by switching to `mcp.tools.<tool_name>()` calls, we encountered a different error:
 
 ```
@@ -17,6 +21,16 @@ AttributeError: 'FastMCP' object has no attribute 'tools'
 ```
 
 This occurred because the MCP instance in the app doesn't support the `tools` attribute pattern or isn't properly initialized for direct tool calls (`app.state.mcp = None` in main.py).
+
+### Problem 3: Circular Import Issues
+
+After implementing our solution with module-level functions, we encountered circular import errors:
+
+```
+ImportError: cannot import name 'app' from partially initialized module 'main' (most likely due to a circular import) (/app/main.py)
+```
+
+This occurred because of interdependencies between main.py, mcp_server.py, and the MCP tool modules.
 
 ## Solution
 
@@ -36,6 +50,12 @@ Our final solution involved:
    - Imported functions directly from their module files
    - Changed all calls to use direct function calls instead of `mcp.tools.<tool_name>()`
    - Added proper parameter names for clarity
+
+4. **Resolving circular import issues**:
+   - Removed direct imports of `app` and `get_app` from module files
+   - Added dynamic imports inside functions where needed
+   - Used import aliases (`import app as main_app`) to avoid conflicts
+   - Replaced global references with function-scoped imports
 
 ## Files Modified
 
@@ -76,8 +96,9 @@ The strategy we implemented ensures that:
 3. App state dependencies are accessible to module-level functions
 4. Code maintains its original functionality but with a different invocation pattern
 5. Registration functions still exist but are simplified to just store dependencies
+6. Circular import issues are resolved by using dynamic imports where needed
 
-This approach provides the best of both worlds: MCP registration for external tool access, and direct function calling for internal use.
+This approach provides the best of both worlds: MCP registration for external tool access, and direct function calling for internal use, while avoiding import issues.
 
 ## Testing
 
