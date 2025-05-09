@@ -339,41 +339,66 @@ async def get_historical_data(symbol: str, timeframe: str = "1d"):
         mm = app.state.market_manager
         http = app.state.http
 
-        # Map frontend timeframe to backend interval
-        interval_map = {
-            "1d": "daily",
-            "1h": "60min",
-            "15m": "15min",
-            "5m": "5min",
-            "1m": "1min"
-        }
-
-        interval = interval_map.get(timeframe, "daily")
-
         # Determine if this is a stock or crypto
         asset_type = "stock"
         if symbol.upper() in ["BTC", "ETH", "XRP", "LTC", "ADA", "DOGE", "USDT", "BNB"]:
             asset_type = "crypto"
 
         try:
+            # Handle different timeframes with appropriate data granularity
             if asset_type == "stock":
                 if timeframe == "1d":
-                    # Use intraday data for the "1d" timeframe to get actual intraday price movements
-                    # "15min" interval with "full" outputsize provides more data points for the day
+                    # For 1-day view, use 15-minute intraday data to show actual intraday movements
                     data = await mm.get_intraday_data(symbol, interval="15min", outputsize="full")
-                    return data
+                elif timeframe == "1w":
+                    # For 1-week view, use daily data
+                    data = await mm.get_time_series_daily(symbol, outputsize="full")
+                elif timeframe == "1m":
+                    # For 1-month view, use daily data
+                    data = await mm.get_time_series_daily(symbol, outputsize="full")
+                elif timeframe == "3m":
+                    # For 3-month view, use daily data
+                    data = await mm.get_time_series_daily(symbol, outputsize="full")
+                elif timeframe == "1h":
+                    # For 1-hour view, use 5-minute intraday data
+                    data = await mm.get_intraday_data(symbol, interval="5min", outputsize="full")
+                elif timeframe == "15m":
+                    # For 15-minute view, use 1-minute intraday data
+                    data = await mm.get_intraday_data(symbol, interval="1min", outputsize="full")
+                elif timeframe == "5m":
+                    # For 5-minute view, use 1-minute intraday data
+                    data = await mm.get_intraday_data(symbol, interval="1min", outputsize="full")
                 else:
-                    # For other timeframes, use the appropriate time series data
-                    data = await mm.get_time_series_daily(symbol)
-                    return data
+                    # Default to daily data for any other timeframe
+                    data = await mm.get_time_series_daily(symbol, outputsize="full")
             else:
+                # For cryptocurrencies
                 if timeframe == "1d":
-                    # Use intraday data for crypto as well when "1d" is requested
+                    # For 1-day view, use 15-minute intraday data
                     data = await mm.get_crypto_intraday(symbol, market="USD", interval="15min", outputsize="full")
-                    return data
-                else:
+                elif timeframe == "1w":
+                    # For 1-week view, use daily data
                     data = await mm.get_crypto_daily(symbol, "USD")
-                    return data
+                elif timeframe == "1m":
+                    # For 1-month view, use daily data
+                    data = await mm.get_crypto_daily(symbol, "USD")
+                elif timeframe == "3m":
+                    # For 3-month view, use daily data
+                    data = await mm.get_crypto_daily(symbol, "USD")
+                elif timeframe == "1h":
+                    # For 1-hour view, use 5-minute intraday data
+                    data = await mm.get_crypto_intraday(symbol, market="USD", interval="5min", outputsize="full")
+                elif timeframe == "15m":
+                    # For 15-minute view, use 1-minute intraday data
+                    data = await mm.get_crypto_intraday(symbol, market="USD", interval="1min", outputsize="full")
+                elif timeframe == "5m":
+                    # For 5-minute view, use 1-minute intraday data
+                    data = await mm.get_crypto_intraday(symbol, market="USD", interval="1min", outputsize="full")
+                else:
+                    # Default to daily data for any other timeframe
+                    data = await mm.get_crypto_daily(symbol, "USD")
+
+            return data
         except Exception as e:
             logger.error(f"Error processing market data: {e}")
             raise HTTPException(status_code=500, detail="Error processing market data")
