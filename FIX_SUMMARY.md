@@ -34,13 +34,23 @@ This occurred because of interdependencies between main.py, mcp_server.py, and t
 
 ### Problem 4: Incorrect Method Parameters
 
-After deploying the code, we encountered a new error related to method parameters:
+After deploying the code, we encountered errors related to method parameters:
 
 ```
 TypeError: MarketManager.get_intraday_data() got an unexpected keyword argument 'http_session'
 ```
 
 This occurred because the `get_intraday_data` method in the `MarketManager` class doesn't accept an `http_session` parameter, unlike other methods in the same class.
+
+### Problem 5: Unexpected Function Arguments
+
+We also encountered another parameter-related error:
+
+```
+TypeError: PriceLevelAnalyzer.identify_support_levels() got an unexpected keyword argument 'include_fibonacci'
+```
+
+This occurred because we were passing `include_fibonacci` and `include_psychological` parameters to the `identify_support_levels` and `identify_resistance_levels` methods, but these methods don't accept these parameters.
 
 ## Solution
 
@@ -73,6 +83,11 @@ After several iterations, our final solution involved:
    - Removed `http_session` parameter from calls to `get_intraday_data`
    - Kept `http_session` parameter for methods that explicitly accept it
    - Relied on the internal HTTP session of MarketManager where needed
+
+6. **Removing unsupported parameters**:
+   - Removed `include_fibonacci` and `include_psychological` parameters from calls to `identify_support_levels` and `identify_resistance_levels`
+   - Ensured method calls match parameter signatures in the PriceLevelAnalyzer class
+   - Fixed all higher timeframe analysis code to use the correct method signatures
 
 ## Files Modified
 

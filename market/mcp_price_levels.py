@@ -82,22 +82,18 @@ async def get_price_levels(symbol: str, asset_type: str = "stock", timeframe: st
         if time_series_key:
             df = MarketDataProcessor.process_time_series_data(primary_data, time_series_key, asset_type)
             if df is not None and not df.empty:
-                # Use all advanced features of PriceLevelAnalyzer
+                # Use PriceLevelAnalyzer to identify levels
                 support_levels = PriceLevelAnalyzer.identify_support_levels(
                     price_data=df,
                     current_price=current_price,
                     latest_atr=latest_atr,
-                    interval=timeframe,
-                    include_fibonacci=True,
-                    include_psychological=True
+                    interval=timeframe
                 )
                 resistance_levels = PriceLevelAnalyzer.identify_resistance_levels(
                     price_data=df,
                     current_price=current_price,
                     latest_atr=latest_atr,
-                    interval=timeframe,
-                    include_fibonacci=True,
-                    include_psychological=True
+                    interval=timeframe
                 )
                 all_support_levels[timeframe] = support_levels
                 all_resistance_levels[timeframe] = resistance_levels
@@ -116,17 +112,13 @@ async def get_price_levels(symbol: str, asset_type: str = "stock", timeframe: st
                         price_data=tf_df,
                         current_price=current_price,
                         latest_atr=latest_atr,
-                        interval=tf,
-                        include_fibonacci=True,
-                        include_psychological=True
+                        interval=tf
                     )
                     tf_resistance = PriceLevelAnalyzer.identify_resistance_levels(
                         price_data=tf_df,
                         current_price=current_price,
                         latest_atr=latest_atr,
-                        interval=tf,
-                        include_fibonacci=True,
-                        include_psychological=True
+                        interval=tf
                     )
                     all_support_levels[tf] = tf_support
                     all_resistance_levels[tf] = tf_resistance
