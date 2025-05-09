@@ -3,6 +3,7 @@ import json
 import logging
 import asyncio
 import re
+import pandas as pd
 from datetime import datetime, UTC
 from typing import Dict, List, Any, Optional, Tuple, Union
 
@@ -1032,7 +1033,7 @@ class CipherAgent:
 
             # Build technical indicators text
             tech_indicators_list = [
-                f"- Current Price: ${current_price:.2f if current_price is not None else 'N/A'} ({change_direction} {price_change_pct:.2f if price_change_pct is not None else 'N/A'}%)",
+                f"- Current Price: ${current_price:.2f if current_price is not None else 'N/A'} ({change_direction or '-'} {price_change_pct:.2f if price_change_pct is not None else 'N/A'}%)",
                 f"- Trend: {trend} with {trend_strength.upper()} momentum (ADX: {latest_adx:.2f if latest_adx is not None else 'N/A'})",
                 f"- Moving Averages: Price trading {price_vs_ma} {sma_period}-day SMA (${latest_sma:.2f if latest_sma is not None else 'N/A'})",
                 f"- EMA {ema_period}-day: ${latest_ema:.2f if latest_ema is not None else 'N/A'} trending {macd_trend.lower()}"
@@ -1586,7 +1587,7 @@ class CipherAgent:
                     sma_period = 50
                     sma = TechnicalIndicators.calculate_sma(df, period=sma_period)
                     indicators["sma"] = {
-                        "value": float(sma.iloc[0]) if not sma.empty and not pd.isna(sma.iloc[0]) else None,
+                        "value": float(sma.iloc[0]) if isinstance(sma, pd.Series) and not sma.empty and not pd.isna(sma.iloc[0]) else sma if isinstance(sma, (int, float)) else None,
                         "period": sma_period
                     }
 
@@ -1594,51 +1595,51 @@ class CipherAgent:
                     ema_period = 20
                     ema = TechnicalIndicators.calculate_ema(df, period=ema_period)
                     indicators["ema"] = {
-                        "value": float(ema.iloc[0]) if not ema.empty and not pd.isna(ema.iloc[0]) else None,
+                        "value": float(ema.iloc[0]) if isinstance(ema, pd.Series) and not ema.empty and not pd.isna(ema.iloc[0]) else ema if isinstance(ema, (int, float)) else None,
                         "period": ema_period
                     }
 
                     # Calculate RSI
                     rsi = TechnicalIndicators.calculate_rsi(df)
                     indicators["rsi"] = {
-                        "value": float(rsi.iloc[0]) if not rsi.empty and not pd.isna(rsi.iloc[0]) else None,
+                        "value": float(rsi.iloc[0]) if isinstance(rsi, pd.Series) and not rsi.empty and not pd.isna(rsi.iloc[0]) else rsi if isinstance(rsi, (int, float)) else None,
                         "period": 14  # Standard period
                     }
 
                     # Calculate MACD
                     macd, signal, _ = TechnicalIndicators.calculate_macd(df)
                     indicators["macd"] = {
-                        "value": float(macd.iloc[0]) if not macd.empty and not pd.isna(macd.iloc[0]) else None,
-                        "signal": float(signal.iloc[0]) if not signal.empty and not pd.isna(signal.iloc[0]) else None,
-                        "histogram": float(macd.iloc[0] - signal.iloc[0]) if not macd.empty and not signal.empty and not pd.isna(macd.iloc[0]) and not pd.isna(signal.iloc[0]) else None
+                        "value": float(macd.iloc[0]) if isinstance(macd, pd.Series) and not macd.empty and not pd.isna(macd.iloc[0]) else macd if isinstance(macd, (int, float)) else None,
+                        "signal": float(signal.iloc[0]) if isinstance(signal, pd.Series) and not signal.empty and not pd.isna(signal.iloc[0]) else signal if isinstance(signal, (int, float)) else None,
+                        "histogram": float(macd.iloc[0] - signal.iloc[0]) if isinstance(macd, pd.Series) and isinstance(signal, pd.Series) and not macd.empty and not signal.empty and not pd.isna(macd.iloc[0]) and not pd.isna(signal.iloc[0]) else None
                     }
 
                     # Calculate Bollinger Bands
                     upper, middle, lower = TechnicalIndicators.calculate_bollinger_bands(df)
                     indicators["bbands"] = {
-                        "upper": float(upper.iloc[0]) if not upper.empty and not pd.isna(upper.iloc[0]) else None,
-                        "middle": float(middle.iloc[0]) if not middle.empty and not pd.isna(middle.iloc[0]) else None,
-                        "lower": float(lower.iloc[0]) if not lower.empty and not pd.isna(lower.iloc[0]) else None
+                        "upper": float(upper.iloc[0]) if isinstance(upper, pd.Series) and not upper.empty and not pd.isna(upper.iloc[0]) else upper if isinstance(upper, (int, float)) else None,
+                        "middle": float(middle.iloc[0]) if isinstance(middle, pd.Series) and not middle.empty and not pd.isna(middle.iloc[0]) else middle if isinstance(middle, (int, float)) else None,
+                        "lower": float(lower.iloc[0]) if isinstance(lower, pd.Series) and not lower.empty and not pd.isna(lower.iloc[0]) else lower if isinstance(lower, (int, float)) else None
                     }
 
                     # Calculate ATR
                     atr = TechnicalIndicators.calculate_atr(df)
                     indicators["atr"] = {
-                        "value": float(atr.iloc[0]) if not atr.empty and not pd.isna(atr.iloc[0]) else None,
+                        "value": float(atr.iloc[0]) if isinstance(atr, pd.Series) and not atr.empty and not pd.isna(atr.iloc[0]) else atr if isinstance(atr, (int, float)) else None,
                         "period": 14  # Standard period
                     }
 
                     # Calculate Stochastic Oscillator
                     k, d = TechnicalIndicators.calculate_stochastic(df)
                     indicators["stochastic"] = {
-                        "k": float(k.iloc[0]) if not k.empty and not pd.isna(k.iloc[0]) else None,
-                        "d": float(d.iloc[0]) if not d.empty and not pd.isna(d.iloc[0]) else None
+                        "k": float(k.iloc[0]) if isinstance(k, pd.Series) and not k.empty and not pd.isna(k.iloc[0]) else k if isinstance(k, (int, float)) else None,
+                        "d": float(d.iloc[0]) if isinstance(d, pd.Series) and not d.empty and not pd.isna(d.iloc[0]) else d if isinstance(d, (int, float)) else None
                     }
 
                     # Calculate ADX
                     adx = TechnicalIndicators.calculate_adx(df)
                     indicators["adx"] = {
-                        "value": float(adx.iloc[0]) if not adx.empty and not pd.isna(adx.iloc[0]) else None
+                        "value": float(adx.iloc[0]) if isinstance(adx, pd.Series) and not adx.empty and not pd.isna(adx.iloc[0]) else adx if isinstance(adx, (int, float)) else None
                     }
 
                     # Calculate VWAP if it's an intraday timeframe
@@ -1646,7 +1647,7 @@ class CipherAgent:
                     if not is_extended:
                         vwap = TechnicalIndicators.calculate_vwap(df)
                         indicators["vwap"] = {
-                            "value": float(vwap.iloc[0]) if not vwap.empty and not pd.isna(vwap.iloc[0]) else None
+                            "value": float(vwap.iloc[0]) if isinstance(vwap, pd.Series) and not vwap.empty and not pd.isna(vwap.iloc[0]) else vwap if isinstance(vwap, (int, float)) else None
                         }
 
                     # 4. Generate price data
