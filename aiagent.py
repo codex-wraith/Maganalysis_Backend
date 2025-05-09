@@ -535,7 +535,16 @@ class CipherAgent:
                     support_zones = price_levels.get("consolidated_support", [])
                     for zone in support_zones[:3]:  # Top 3 support zones
                         if "price" in zone and zone["price"] < current_price:
-                            timeframes = "/".join(zone.get("timeframes", []))
+                            # Handle timeframes that might be a string, list, or any other type
+                            timeframes_data = zone.get("timeframes", [])
+                            if isinstance(timeframes_data, list):
+                                timeframes = "/".join(timeframes_data)
+                            elif isinstance(timeframes_data, str):
+                                timeframes = timeframes_data
+                            else:
+                                # Handle float or other types by converting to string
+                                timeframes = str(timeframes_data)
+                                
                             strength = zone.get('strength', 0)
                             mtf_context += f"- ${zone['price']} (strength: {strength:.1f}, timeframes: {timeframes})\n"
                     
@@ -544,7 +553,16 @@ class CipherAgent:
                     resistance_zones = price_levels.get("consolidated_resistance", [])
                     for zone in resistance_zones[:3]:  # Top 3 resistance zones
                         if "price" in zone and zone["price"] > current_price:
-                            timeframes = "/".join(zone.get("timeframes", []))
+                            # Handle timeframes that might be a string, list, or any other type
+                            timeframes_data = zone.get("timeframes", [])
+                            if isinstance(timeframes_data, list):
+                                timeframes = "/".join(timeframes_data)
+                            elif isinstance(timeframes_data, str):
+                                timeframes = timeframes_data
+                            else:
+                                # Handle float or other types by converting to string
+                                timeframes = str(timeframes_data)
+                                
                             strength = zone.get('strength', 0)
                             mtf_context += f"- ${zone['price']} (strength: {strength:.1f}, timeframes: {timeframes})\n"
             except Exception as e:

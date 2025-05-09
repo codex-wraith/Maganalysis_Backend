@@ -166,3 +166,31 @@ This completes our implementation of the consistent module structure pattern acr
 
 With these additional fixes, all MCP-related modules should now follow the same pattern and avoid the circular import issues.
 EOF < /dev/null
+
+## Additional Fix - "float object has no attribute get" Error
+
+After deploying the previous fixes, we encountered another error:
+```
+Error generating MTF context: 'float' object has no attribute 'get'
+```
+
+This error occurred in aiagent.py when trying to generate multi-timeframe context. The issue was in the code that processes price level data, where we were trying to use the .get() method on a "timeframes" field that could sometimes be a float instead of a dictionary.
+
+### Fix Implemented:
+
+In aiagent.py, we added robust type checking to handle cases where the "timeframes" field might be a float, string, list, or other type:
+
+```python
+# Handle timeframes that might be a string, list, or any other type
+timeframes_data = zone.get("timeframes", [])
+if isinstance(timeframes_data, list):
+    timeframes = "/".join(timeframes_data)
+elif isinstance(timeframes_data, str):
+    timeframes = timeframes_data
+else:
+    # Handle float or other types by converting to string
+    timeframes = str(timeframes_data)
+```
+
+This fix ensures that we can handle any type for the "timeframes" field and prevents the "float object has no attribute get" error.
+EOF < /dev/null
