@@ -1948,12 +1948,43 @@ class CipherAgent:
 
             price_level_analyzer = PriceLevelAnalyzer()
 
-            # Use the price level analyzer to consolidate the levels
-            consolidated_levels = price_level_analyzer.consolidate_multi_timeframe_levels(all_levels, current_price, latest_atr)
+            # Transform all_levels into the format expected by consolidate_multi_timeframe_levels
+            # The function expects a dictionary mapping timeframes to lists of price levels
+            support_by_timeframe = {}
+            resistance_by_timeframe = {}
 
-            # Separate into support and resistance
-            support_zones = [level for level in consolidated_levels if level["type"] == "support" and level["price"] < current_price]
-            resistance_zones = [level for level in consolidated_levels if level["type"] == "resistance" and level["price"] > current_price]
+            # Organize levels by timeframe and type
+            for level in all_levels:
+                level_type = level.get("type")
+                price = level.get("price")
+                timeframes = level.get("timeframes", [])
+
+                if not timeframes or not price:
+                    continue
+
+                # For each timeframe this level applies to
+                for tf in timeframes:
+                    if level_type == "support":
+                        if tf not in support_by_timeframe:
+                            support_by_timeframe[tf] = []
+                        support_by_timeframe[tf].append(price)
+                    elif level_type == "resistance":
+                        if tf not in resistance_by_timeframe:
+                            resistance_by_timeframe[tf] = []
+                        resistance_by_timeframe[tf].append(price)
+
+            # Consolidate support and resistance levels separately
+            support_zones = price_level_analyzer.consolidate_multi_timeframe_levels(
+                support_by_timeframe, current_price, latest_atr, LevelType.SUPPORT
+            )
+
+            resistance_zones = price_level_analyzer.consolidate_multi_timeframe_levels(
+                resistance_by_timeframe, current_price, latest_atr, LevelType.RESISTANCE
+            )
+
+            # Filter by price position for safety
+            support_zones = [level for level in support_zones if level["price"] < current_price]
+            resistance_zones = [level for level in resistance_zones if level["price"] > current_price]
 
             # Sort by proximity to current price
             support_zones = sorted(support_zones, key=lambda x: abs(current_price - x["price"]))
