@@ -1033,14 +1033,14 @@ class CipherAgent:
 
             # Build technical indicators text
             tech_indicators_list = [
-                f"- Current Price: ${current_price:.2f if current_price is not None else 'N/A'} ({change_direction or '-'} {price_change_pct:.2f if price_change_pct is not None else 'N/A'}%)",
+                f"- Current Price: ${current_price:.2f if current_price is not None and isinstance(current_price, (int, float)) else 'N/A'} ({change_direction or '-'} {price_change_pct:.2f if price_change_pct is not None and isinstance(price_change_pct, (int, float)) else 'N/A'}%)",
                 f"- Trend: {trend} with {trend_strength.upper()} momentum (ADX: {latest_adx:.2f if latest_adx is not None else 'N/A'})",
                 f"- Moving Averages: Price trading {price_vs_ma} {sma_period}-day SMA (${latest_sma:.2f if latest_sma is not None else 'N/A'})",
                 f"- EMA {ema_period}-day: ${latest_ema:.2f if latest_ema is not None else 'N/A'} trending {macd_trend.lower()}"
             ]
 
             if not is_extended and vwap_value is not None:
-                tech_indicators_list.append(f"- VWAP: ${vwap_value:.2f} - Critical volume-weighted price level")
+                tech_indicators_list.append(f"- VWAP: ${vwap_value:.2f if vwap_value is not None else 'N/A'} - Critical volume-weighted price level")
 
             tech_indicators_list.extend([
                 f"- RSI: {latest_rsi:.2f if latest_rsi is not None else 'N/A'} ({rsi_interpretation})",
@@ -1607,7 +1607,7 @@ class CipherAgent:
                     }
 
                     # Calculate MACD
-                    macd, signal, _ = TechnicalIndicators.calculate_macd(df)
+                    macd, signal = TechnicalIndicators.calculate_macd(df)
                     indicators["macd"] = {
                         "value": float(macd.iloc[0]) if isinstance(macd, pd.Series) and not macd.empty and not pd.isna(macd.iloc[0]) else macd if isinstance(macd, (int, float)) else None,
                         "signal": float(signal.iloc[0]) if isinstance(signal, pd.Series) and not signal.empty and not pd.isna(signal.iloc[0]) else signal if isinstance(signal, (int, float)) else None,
