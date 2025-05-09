@@ -1711,25 +1711,34 @@ class CipherAgent:
                     # Calculate support and resistance for this timeframe
                     support_levels, resistance_levels = [], []
                     if not df.empty and len(df) > 10:  # Need enough data points
-                        # Get raw levels
-                        raw_levels = price_level_analyzer.identify_key_levels(df, current_price)
+                        # Get support and resistance levels using the correct methods
+                        support_levels_raw = price_level_analyzer.identify_support_levels(
+                            price_data=df,
+                            current_price=current_price,
+                            interval=interval
+                        )
 
-                        # Format for response
-                        for level in raw_levels:
-                            if level["type"] == LevelType.SUPPORT and level["price"] < current_price:
-                                support_levels.append({
-                                    "price": level["price"],
-                                    "strength": level["strength"],
-                                    "distance": abs(current_price - level["price"]),
-                                    "distance_percent": abs(current_price - level["price"]) / current_price * 100
-                                })
-                            elif level["type"] == LevelType.RESISTANCE and level["price"] > current_price:
-                                resistance_levels.append({
-                                    "price": level["price"],
-                                    "strength": level["strength"],
-                                    "distance": abs(current_price - level["price"]),
-                                    "distance_percent": abs(current_price - level["price"]) / current_price * 100
-                                })
+                        resistance_levels_raw = price_level_analyzer.identify_resistance_levels(
+                            price_data=df,
+                            current_price=current_price,
+                            interval=interval
+                        )
+
+                        # Format support levels for response
+                        for price in support_levels_raw:
+                            support_levels.append({
+                                "price": price,
+                                "distance": current_price - price if current_price else 0,
+                                "distance_pct": ((current_price - price) / price * 100) if current_price and price else 0
+                            })
+
+                        # Format resistance levels for response
+                        for price in resistance_levels_raw:
+                            resistance_levels.append({
+                                "price": price,
+                                "distance": price - current_price if current_price else 0,
+                                "distance_pct": ((price - current_price) / current_price * 100) if current_price and price else 0
+                            })
 
                         # Sort by price (ascending for support, descending for resistance)
                         support_levels = sorted(support_levels, key=lambda x: x["price"], reverse=True)
@@ -1743,7 +1752,7 @@ class CipherAgent:
                     # Return comprehensive analysis result with all calculated data
                     return {
                         "interval": interval,
-                        "current_price": price_data.get("current"),
+                        "current_price": current_price if 'current_price' in locals() else price_data.get("current"),
                         "latest_open": price_data.get("open"),
                         "price_change_pct": price_data.get("change_percent", 0),
                         "change_direction": "↑" if price_data.get("change_percent", 0) > 0 else "↓" if price_data.get("change_percent", 0) < 0 else "→",
@@ -1761,7 +1770,7 @@ class CipherAgent:
             logger.warning(f"Could not process market data for {symbol} ({interval})")
             return {
                 "interval": interval,
-                "current_price": None,
+                "current_price": current_price if 'current_price' in locals() else None,
                 "latest_open": None,
                 "price_change_pct": 0,
                 "change_direction": "→",
@@ -1778,7 +1787,7 @@ class CipherAgent:
             logger.error(f"Error analyzing timeframe {interval} for {symbol}: {e}")
             return {
                 "interval": interval,
-                "current_price": None,
+                "current_price": current_price if 'current_price' in locals() else None,
                 "latest_open": None,
                 "price_change_pct": 0,
                 "change_direction": "→",
