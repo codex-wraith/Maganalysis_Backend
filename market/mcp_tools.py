@@ -77,8 +77,8 @@ async def get_raw_market_data(symbol: str, asset_type: str = "stock", timeframe:
         if timeframe not in valid_timeframes:
             timeframe = "daily"  # Default to daily if invalid timeframe
             
-        # Cache key for this data
-        key = f"{symbol}-{timeframe}"
+        # Cache key for this data (raw data)
+        key = f"{symbol}-{timeframe}-raw"
         ts_now, cached = cache.get(key, (0, None))
         if time.time() - ts_now < 60:
             return cached
@@ -114,7 +114,7 @@ async def get_raw_market_data(symbol: str, asset_type: str = "stock", timeframe:
             sliced = dict(list(data[series_key].items())[:100])  # last 100 candles
             data[series_key] = sliced
         
-        # Cache the result
+        # Cache the raw result
         cache[key] = (time.time(), data)
         return data
             
@@ -122,19 +122,7 @@ async def get_raw_market_data(symbol: str, asset_type: str = "stock", timeframe:
         logger.error(f"Error getting market data for {symbol}: {e}")
         raise ToolError(f"Failed to get market data: {str(e)}")
 
-async def get_market_data(symbol: str, asset_type: str = "stock", timeframe: str = "daily"):
-    """
-    Get market data for a symbol.
-    
-    Args:
-        symbol: The stock or crypto symbol (e.g., AAPL, BTC)
-        asset_type: Either "stock" or "crypto"
-        timeframe: One of "1min", "5min", "15min", "30min", "60min", "daily", "weekly", "monthly"
-        
-    Returns:
-        Dictionary containing the market data
-    """
-    return await get_raw_market_data(symbol, asset_type, timeframe)
+# Removed redundant get_market_data function as it was just a wrapper around get_raw_market_data
 
 async def get_technical_indicators(symbol: str, asset_type: str = "stock", timeframe: str = "daily"):
     """
@@ -149,22 +137,37 @@ async def get_technical_indicators(symbol: str, asset_type: str = "stock", timef
         Dictionary containing the technical indicators
     """
     try:
-        # Get market data
-        data = await get_raw_market_data(symbol, asset_type, timeframe)
-        
-        # Process the data
-        from market.data_processor import MarketDataProcessor
-        
-        # Find the time series key
-        time_series_key = next((k for k in data.keys() if "Time Series" in k or "Digital Currency" in k), None)
-        
-        if not time_series_key or not data.get(time_series_key):
-            raise ToolError(f"No time series data available for {symbol}")
-        
-        # Process the data
-        df = MarketDataProcessor.process_time_series_data(data, time_series_key, asset_type)
-        if df is None or df.empty:
-            raise ToolError("Failed to process time series data")
+        # Get app state to access cache
+        from main import app as main_app
+        cache = main_app.state.cache
+
+        # Check if we have a cached processed DataFrame
+        df_cache_key = f"{symbol}-{timeframe}-{asset_type}-df"
+        ts_now, cached_df = cache.get(df_cache_key, (0, None))
+        if time.time() - ts_now < 60 and cached_df is not None:
+            df = cached_df
+            logger.debug(f"Using cached DataFrame for {symbol} {timeframe}")
+        else:
+            # Get market data
+            data = await get_raw_market_data(symbol, asset_type, timeframe)
+
+            # Process the data
+            from market.data_processor import MarketDataProcessor
+
+            # Find the time series key
+            time_series_key = next((k for k in data.keys() if "Time Series" in k or "Digital Currency" in k), None)
+
+            if not time_series_key or not data.get(time_series_key):
+                raise ToolError(f"No time series data available for {symbol}")
+
+            # Process the data
+            df = MarketDataProcessor.process_time_series_data(data, time_series_key, asset_type)
+            if df is None or df.empty:
+                raise ToolError("Failed to process time series data")
+
+            # Cache the processed DataFrame
+            cache[df_cache_key] = (time.time(), df)
+            logger.debug(f"Cached processed DataFrame for {symbol} {timeframe}")
         
         # Get timeframe-specific parameters
         params = TimeframeParameters.get_parameters(timeframe)
@@ -468,7 +471,7 @@ def register_market_tools(mcp_instance, app_instance, market_manager_instance, h
     
     # Register the module-level functions as MCP tools
     mcp_instance.tool()(get_raw_market_data)
-    mcp_instance.tool()(get_market_data)
+    # Removed redundant get_market_data registration
     mcp_instance.tool()(get_technical_indicators)
     mcp_instance.tool()(get_news_sentiment)
     mcp_instance.tool()(search_market_information)
