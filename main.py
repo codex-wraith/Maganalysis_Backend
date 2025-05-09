@@ -65,9 +65,6 @@ async def lifespan(app: FastAPI):
         app.state.settings = AISettings()
         app.state.market_manager = MarketManager(shared_session)
         
-        # Note: We're skipping MCP initialization to avoid URL validation issues
-        logger.info("Skipping MCP server initialization due to URL validation issues")
-        
         # Initialize core components with direct implementation
         logger.info("Initializing CipherAgent...")
         app.state.agent = CipherAgent()
