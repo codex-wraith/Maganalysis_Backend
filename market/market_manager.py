@@ -439,10 +439,12 @@ class MarketManager:
                         latest_date = dates[0]
                         prev_date = dates[1]
 
-                        # Use yesterday's close to calculate change percentage
+                        # Use yesterday's close for comparison with today's close
+                        latest_close = float(time_series[latest_date].get("4a. close (USD)", 0.0))
                         prev_close = float(time_series[prev_date].get("4a. close (USD)", 0.0))
                         if prev_close != 0:
-                            change = current_price - prev_close
+                            # Calculate daily change percentage based on close-to-close
+                            change = latest_close - prev_close
                             change_p = (change / prev_close) * 100
                             price_data["change_percent_val"] = change_p
                             price_data["change_percent_str"] = f"{'+' if change_p >= 0 else ''}{change_p:.2f}%"
